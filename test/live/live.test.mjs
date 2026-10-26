@@ -19,6 +19,22 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 dotenv.config({ path: path.resolve('.env.live'), quiet: true });
 
 const e = process.env;
+
+// Credentials can also arrive as a ready-made account (see with-keychain.sh), so no password has to be
+// written to a file: LIVE_ACCOUNTS_JSON holds {smtp: {...}, imap: {...}} objects keyed by account name.
+if (e.LIVE_ACCOUNTS_JSON && e.LIVE_ACCOUNT) {
+  const chosen = JSON.parse(e.LIVE_ACCOUNTS_JSON)[e.LIVE_ACCOUNT];
+  if (chosen) {
+    Object.assign(e, {
+      LIVE_SMTP_HOST: chosen.smtp.host,
+      LIVE_SMTP_PORT: String(chosen.smtp.port ?? 587),
+      LIVE_IMAP_HOST: chosen.imap.host,
+      LIVE_IMAP_PORT: String(chosen.imap.port ?? 993),
+      LIVE_A_USER: chosen.smtp.user,
+      LIVE_A_PASS: chosen.smtp.password
+    });
+  }
+}
 const hasB = Boolean(e.LIVE_B_USER && e.LIVE_B_PASS);
 const configured = ['LIVE_SMTP_HOST', 'LIVE_IMAP_HOST', 'LIVE_A_USER', 'LIVE_A_PASS'].every((key) => e[key]) && (hasB || e.LIVE_EXTERNAL_TO);
 const skip = configured ? false : 'Fill .env.live (see .env.live.example) to run the live test';

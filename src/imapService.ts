@@ -367,6 +367,46 @@ export function resolveSpecialFolder(
 }
 
 /**
+ * The spam folder: the one flagged \\Junk, else a common name (Junk, Spam, ...)
+ */
+export function resolveJunkFolder(folders: Array<{ path: string; specialUse?: string }>): string {
+  const flagged = folders.find((folder) => folder.specialUse === '\\Junk');
+  if (flagged) return flagged.path;
+  const names = ['junk', 'spam', 'junk e-mail', 'junk email', 'bulk mail'];
+  const byName = folders.find((folder) => names.includes(folder.path.toLowerCase()));
+  if (byName) return byName.path;
+  throw new Error('No Junk/Spam folder found; create one or use move_to_folder');
+}
+
+/**
+ * Permanently remove all (or only old) messages from a Trash or Junk folder
+ */
+export async function emptyFolder(
+  account: EmailAccount,
+  path: string,
+  olderThanDays?: number
+): Promise<{ folder: string; deleted: number }> {
+  const client = await createImapConnection(account);
+  try {
+    const match = (await client.list()).find((folder) => folder.path === path);
+    if (!match) throw new Error(`Folder not found: ${path}`);
+    if (match.specialUse !== '\\Trash' && match.specialUse !== '\\Junk') {
+      throw new Error(`Only Trash and Junk folders can be emptied; ${path} is not one (use emails_modify to delete messages elsewhere)`);
+    }
+    await client.mailboxOpen(path);
+    const criteria: any = olderThanDays === undefined
+      ? { all: true }
+      : { before: new Date(Date.now() - olderThanDays * 86400000) };
+    const uids = await client.search(criteria, { uid: true });
+    if (!uids || uids.length === 0) return { folder: path, deleted: 0 };
+    await withTimeout(client.messageDelete(uids, { uid: true }), 60000, 'Emptying folder timed out');
+    return { folder: path, deleted: uids.length };
+  } finally {
+    await client.logout().catch(() => {});
+  }
+}
+
+/**
  * Create a folder (nested paths like "Projects/2026" use the server's delimiter)
  */
 export async function createFolder(account: EmailAccount, path: string): Promise<string> {
