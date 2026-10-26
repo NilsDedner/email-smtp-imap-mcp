@@ -146,7 +146,8 @@ Per account (environment variable, or the lowercase key in `EMAIL_ACCOUNTS_JSON`
 | Tool | What it does |
 | --- | --- |
 | `accounts_list` | List every configured account and identify the default without exposing credentials. |
-| `emails_find` | Search by text, sender, recipient, subject, date, read state, flag state, or attachments in INBOX or any other `folder`. Optionally return bodies and attachments. |
+| `emails_find` | Search by text, sender, recipient, subject, date, read state, flag state, or attachments in INBOX or any other `folder`. Optionally return bodies. Results list attachments (name, type, size, part) in `attachment_list`; `include_attachments` inlines all of them as base64. |
+| `attachment_get` | Download one attachment (base64, up to 25 MB) by filename or part id, from INBOX or any `folder`. |
 | `email_send` | Send plain-text or HTML email with CC, BCC, sender aliases, and base64 attachments. |
 | `email_respond` | Reply, reply-all, or forward by email UID (from INBOX or any `folder`) with threading and optional original attachments. The original is flagged `\Answered` or `$Forwarded`. |
 | `emails_modify` | Mark read/unread, flag/unflag, move messages to another folder, or delete them (to Trash by default; `permanent: true` removes for good and needs `ALLOW_PERMANENT_DELETE`). Works on any source `folder`. |

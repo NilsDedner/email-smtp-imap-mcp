@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- `attachment_get` downloads a single attachment; `emails_find` results list attachments in `attachment_list` without downloading them.
 - `draft_update`, `draft_send` and `draft_delete` complete the draft workflow; `draft_create` can answer an existing message with `reply_to_email_id`.
 - `email_respond` accepts a `folder` and flags the original `\Answered` (reply) or `$Forwarded` (forward); the result reports `original_flagged`.
 - Per-account safety switches `READ_ONLY`, `ALLOW_DELETE` and `ALLOW_PERMANENT_DELETE`; `accounts_list` reports them.

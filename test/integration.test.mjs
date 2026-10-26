@@ -386,3 +386,55 @@ test('draft_delete moves to Trash, permanent needs the permission', { skip }, as
   assert.equal(hard.success, true);
   assert.deepEqual(await env.messages('alice', 'Drafts'), []);
 });
+
+test('attachments are listed with metadata and fetched one by one', { skip }, async () => {
+  const binary = Buffer.from([0, 1, 2, 250, 251, 252, 255, 10, 13]);
+  const uid = await env.seed('alice', {
+    subject: 'Files',
+    attachments: [
+      { filename: 'report.txt', content: 'quarterly numbers', contentType: 'text/plain' },
+      { filename: 'data.bin', content: binary, contentType: 'application/octet-stream' },
+      { filename: 'Übersicht März.pdf', content: Buffer.from('%PDF-fake'), contentType: 'application/pdf' }
+    ]
+  });
+  await env.seed('alice', { subject: 'Plain' });
+
+  const found = await call('emails_find', { filters: { subject: 'Files' } });
+  const [email] = found.emails;
+  assert.equal(email.has_attachments, true);
+  assert.equal(email.attachments, undefined, 'no inline content unless requested');
+  assert.deepEqual(email.attachment_list.map((a) => a.filename), ['report.txt', 'data.bin', 'Übersicht März.pdf']);
+  assert.equal(email.attachment_list[1].content_type, 'application/octet-stream');
+  assert.ok(email.attachment_list.every((a) => a.part && a.size > 0));
+  const plain = await call('emails_find', { filters: { subject: 'Plain' } });
+  assert.equal(plain.emails[0].attachment_list, undefined);
+
+  const byName = await call('attachment_get', { email_id: String(uid), filename: 'data.bin' });
+  assert.equal(byName.success, true);
+  assert.deepEqual(Buffer.from(byName.content, 'base64'), binary);
+  assert.equal(byName.size, binary.length);
+
+  const byPart = await call('attachment_get', { email_id: String(uid), part: email.attachment_list[0].part });
+  assert.equal(Buffer.from(byPart.content, 'base64').toString(), 'quarterly numbers');
+  assert.equal(byPart.filename, 'report.txt');
+
+  const unicode = await call('attachment_get', { email_id: String(uid), filename: 'Übersicht März.pdf' });
+  assert.equal(Buffer.from(unicode.content, 'base64').toString(), '%PDF-fake');
+
+  const unknown = await call('attachment_get', { email_id: String(uid), filename: 'nope.txt' });
+  assert.equal(unknown.success, false);
+  assert.match(unknown.error, /data\.bin/);
+  assert.equal((await call('attachment_get', { email_id: String(uid) })).success, false);
+  assert.equal((await call('attachment_get', { email_id: '9999', filename: 'x' })).success, false);
+});
+
+test('attachment_get works from other folders and on read-only accounts', { skip }, async () => {
+  const uid = await env.seed('bob', {
+    folder: 'Trash',
+    subject: 'Old file',
+    attachments: [{ filename: 'old.txt', content: 'archived', contentType: 'text/plain' }]
+  });
+  const result = await call('attachment_get', { account_name: 'bob', folder: 'Trash', email_id: String(uid), filename: 'old.txt' });
+  assert.equal(result.success, true);
+  assert.equal(Buffer.from(result.content, 'base64').toString(), 'archived');
+});

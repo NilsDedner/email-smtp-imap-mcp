@@ -19,7 +19,7 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
    */
   "emails_find": {
     name: "emails_find",
-    description: "Search for emails in your inbox with flexible filters. Optionally get full email content and attachments. Use this to find specific emails, check for unread messages, or browse your inbox.",
+    description: "Search for emails with flexible filters. Optionally get full email content. Results list attachments (name, type, size, part) in attachment_list; fetch a single one with attachment_get. include_attachments returns every attachment inline and can be very large.",
     inputSchema: {
       type: "object",
       properties: {
@@ -283,6 +283,25 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
         }
       },
       required: ["email_id", "body"]
+    }
+  },
+
+  /**
+   * Download one attachment
+   */
+  "attachment_get": {
+    name: "attachment_get",
+    description: "Download a single attachment of an email as base64. Use the filename or part from attachment_list in emails_find results. Limited to 25 MB.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account_name: { type: "string", description: "Name of the email account to use" },
+        email_id: { type: "string", description: "ID of the email (from emails_find results)" },
+        folder: { type: "string", default: "INBOX", description: "Folder the email is in" },
+        filename: { type: "string", description: "Attachment filename (use part instead if several share a name)" },
+        part: { type: "string", description: "Attachment part id from attachment_list, e.g. '2' or '1.2'" }
+      },
+      required: ["email_id"]
     }
   },
 

@@ -19,6 +19,7 @@ import {
   handleEmailSend,
   handleEmailRespond,
   handleFoldersList,
+  handleAttachmentGet,
   handleDraftCreate,
   handleDraftUpdate,
   handleDraftSend,
@@ -115,6 +116,10 @@ async function runServer() {
 
           case "draft_create":
             result = await handleDraftCreate(args);
+            break;
+
+          case "attachment_get":
+            result = await handleAttachmentGet(args);
             break;
 
           case "draft_update":

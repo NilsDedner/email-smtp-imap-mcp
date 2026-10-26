@@ -3,7 +3,7 @@
  */
 
 import { getAccount, loadAccounts } from './accountManager.js';
-import { searchEmails, modifyEmails, listFolders, createFolder, deleteFolder, resolveDraftsFolder } from './imapService.js';
+import { searchEmails, modifyEmails, listFolders, getAttachment, createFolder, deleteFolder, resolveDraftsFolder } from './imapService.js';
 import { sendEmail, replyToEmail, forwardEmail } from './smtpService.js';
 import { createDraft, updateDraft, sendDraft } from './draftService.js';
 import { EmailAccount, EmailFilters } from './types.js';
@@ -568,6 +568,41 @@ export async function handleFolderDelete(args: any): Promise<string> {
     return JSON.stringify({
       success: false,
       error: error.message || 'Failed to delete folder'
+    }, null, 2);
+  }
+}
+
+/**
+ * Handle attachment_get tool
+ */
+export async function handleAttachmentGet(args: any): Promise<string> {
+  try {
+    args = args || {};
+    const { name, config } = getAccount(args.account_name);
+
+    const emailId = requireString(args.email_id, 'email_id');
+    const folder = validateOptionalString(args.folder, 'folder') || 'INBOX';
+    const part = validateOptionalString(args.part, 'part');
+    const filename = validateOptionalString(args.filename, 'filename');
+    if (!part && !filename) throw new Error('part or filename is required (see attachment_list in emails_find results)');
+
+    const attachment = await getAttachment(config, folder, emailId, { part, filename });
+
+    return JSON.stringify({
+      success: true,
+      account: name,
+      email_id: emailId,
+      folder,
+      filename: attachment.filename,
+      content_type: attachment.content_type,
+      size: attachment.size,
+      content: attachment.content
+    }, null, 2);
+
+  } catch (error: any) {
+    return JSON.stringify({
+      success: false,
+      error: error.message || 'Failed to get attachment'
     }, null, 2);
   }
 }

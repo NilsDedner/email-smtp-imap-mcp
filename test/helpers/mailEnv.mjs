@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { SMTPServer } from 'smtp-server';
+import MailComposer from 'nodemailer/lib/mail-composer/index.js';
 
 const composeFile = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../docker/compose.yml');
 const DOMAIN = 'example.test';
@@ -145,7 +146,12 @@ export async function startMailEnv() {
       }
     },
     /** Put a message into a folder and return its UID */
-    async seed(userKey, { folder = 'INBOX', subject, from = 'carol@example.test', to, body = 'seed body', flags = [] }) {
+    async seed(userKey, { folder = 'INBOX', subject, from = 'carol@example.test', to, body = 'seed body', flags = [], attachments }) {
+      if (attachments) {
+        const mail = new MailComposer({ from, to: to || USERS[userKey].user, subject, text: body, attachments, messageId: `<${Date.now()}-${Math.random().toString(16).slice(2)}@example.test>` });
+        const built = await mail.compile().build();
+        return this.withImap(userKey, async (client) => (await client.append(folder, built, flags)).uid);
+      }
       const raw = [
         `Message-ID: <${Date.now()}-${Math.random().toString(16).slice(2)}@example.test>`,
         `From: ${from}`,

@@ -4,7 +4,7 @@
 
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
-import { EmailAccount, EmailFilters, EmailMessage, EmailFolder } from './types.js';
+import { AttachmentInfo, EmailAccount, EmailFilters, EmailMessage, EmailFolder } from './types.js';
 
 /**
  * Create IMAP connection with timeout and error handling
@@ -565,6 +565,79 @@ export async function flagMessage(
   }
 }
 
+/**
+ * List attachment parts of a message from its BODYSTRUCTURE (no download needed)
+ */
+export function collectAttachments(node: any, out: AttachmentInfo[] = [], isRoot = true): AttachmentInfo[] {
+  if (!node) return out;
+  if (node.childNodes?.length) {
+    for (const child of node.childNodes) collectAttachments(child, out, false);
+    return out;
+  }
+  const disposition = String(node.disposition || '').toLowerCase();
+  const filename = node.dispositionParameters?.filename || node.parameters?.name;
+  const type = String(node.type || '').toLowerCase();
+  const isBodyText = type === 'text/plain' || type === 'text/html';
+  if (disposition === 'attachment' || (filename && !isBodyText && type !== 'message/delivery-status')) {
+    out.push({
+      part: node.part || (isRoot ? '1' : ''),
+      filename: filename || 'unnamed',
+      content_type: type || 'application/octet-stream',
+      size: node.size || 0
+    });
+  }
+  return out;
+}
+
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Download one attachment (decoded) by part id or filename
+ */
+export async function getAttachment(
+  account: EmailAccount,
+  folder: string,
+  emailId: string,
+  selector: { part?: string; filename?: string }
+): Promise<{ filename: string; content_type: string; size: number; content: string }> {
+  if (!/^\d+$/.test(emailId) || Number(emailId) < 1) throw new Error(`Invalid email ID: ${emailId}`);
+  const client = await createImapConnection(account);
+  try {
+    await client.mailboxOpen(folder, { readOnly: true });
+    const message = await client.fetchOne(emailId, { uid: true, bodyStructure: true }, { uid: true });
+    if (!message) throw new Error(`Email with ID ${emailId} not found in ${folder}`);
+
+    const attachments = collectAttachments(message.bodyStructure);
+    if (attachments.length === 0) throw new Error(`Email ${emailId} has no attachments`);
+    const matches = attachments.filter((item) =>
+      selector.part ? item.part === selector.part : item.filename === selector.filename
+    );
+    if (matches.length === 0) {
+      throw new Error(`Attachment not found. Available: ${attachments.map((item) => `${item.filename} (part ${item.part})`).join(', ')}`);
+    }
+    if (matches.length > 1) {
+      throw new Error(`Several attachments are named ${selector.filename}; select one by part: ${matches.map((item) => item.part).join(', ')}`);
+    }
+    const info = matches[0];
+    if (info.size > MAX_ATTACHMENT_BYTES * 1.4) {
+      throw new Error(`Attachment is too large (${info.size} bytes encoded, limit ${MAX_ATTACHMENT_BYTES} bytes)`);
+    }
+
+    const { content } = await withTimeout(client.download(emailId, info.part, { uid: true }), 30000, 'Attachment download timed out');
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for await (const chunk of content) {
+      total += chunk.length;
+      if (total > MAX_ATTACHMENT_BYTES) throw new Error(`Attachment exceeds the ${MAX_ATTACHMENT_BYTES} byte limit`);
+      chunks.push(chunk);
+    }
+    const data = Buffer.concat(chunks);
+    return { filename: info.filename, content_type: info.content_type, size: data.length, content: data.toString('base64') };
+  } finally {
+    await client.logout().catch(() => {});
+  }
+}
+
 function structureHasAttachment(node: any): boolean {
   if (!node) return false;
   if (String(node.disposition || '').toLowerCase() === 'attachment') return true;
@@ -594,6 +667,7 @@ async function mapMessage(
   const formatAddress = (address: any): string =>
     address ? `${address.name || ''} <${address.address}>`.trim() : 'Unknown';
   const envelope = message.envelope;
+  const attachmentList = collectAttachments(message.bodyStructure);
 
   return {
     id: message.uid.toString(),
@@ -610,6 +684,7 @@ async function mapMessage(
     is_unread: !message.flags?.has('\\Seen'),
     is_flagged: message.flags?.has('\\Flagged') || false,
     has_attachments: structureHasAttachment(message.bodyStructure),
+    ...(attachmentList.length ? { attachment_list: attachmentList } : {}),
     attachments
   };
 }

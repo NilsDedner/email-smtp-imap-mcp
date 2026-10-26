@@ -43,6 +43,13 @@ export interface EmailAttachment {
   content_type?: string;
 }
 
+export interface AttachmentInfo {
+  part: string;
+  filename: string;
+  content_type: string;
+  size: number;
+}
+
 export interface EmailMessage {
   id: string;
   thread_id?: string;
@@ -59,6 +66,7 @@ export interface EmailMessage {
   is_flagged: boolean;
   has_attachments: boolean;
   attachments?: EmailAttachment[];
+  attachment_list?: AttachmentInfo[];
 }
 
 export interface EmailFolder {
