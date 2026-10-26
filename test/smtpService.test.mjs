@@ -82,6 +82,7 @@ test('new tools validate input before connecting', async () => {
   const { handleDraftCreate, handleEmailsModify, handleFolderDelete } = await import('../build/emailHandlers.js');
   process.env.EMAIL_ACCOUNTS_JSON = JSON.stringify({
     t: {
+      allow_permanent_delete: true,
       smtp: { host: 'smtp.test', user: 't@example.com', password: 'x' },
       imap: { host: 'imap.test', user: 't@example.com', password: 'x' }
     }

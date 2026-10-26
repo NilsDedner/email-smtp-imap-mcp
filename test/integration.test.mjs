@@ -178,3 +178,77 @@ test('email_respond replies with threading headers and forwards', { skip }, asyn
   const subjects = (await env.messages('bob')).map((m) => m.subject).sort();
   assert.deepEqual(subjects, ['Fwd: Question', 'Re: Question']);
 });
+
+test('read_only accounts can read but not change anything', { skip }, async () => {
+  const uid = await env.seed('bob', { subject: 'Look but do not touch' });
+  const readOnly = { account_name: 'bob' };
+
+  const found = await call('emails_find', { ...readOnly, include_content: true });
+  assert.equal(found.success, true);
+  assert.equal(found.emails[0].subject, 'Look but do not touch');
+  assert.ok(found.emails[0].is_unread);
+  const [stillUnread] = await env.messages('bob');
+  assert.ok(!stillUnread.flags.has('\\Seen'), 'reading must not mark mail as seen');
+  assert.equal((await call('folders_list', readOnly)).success, true);
+
+  const blocked = [
+    ['email_send', { to: ['alice@example.test'], subject: 's', body: 'b' }],
+    ['email_respond', { email_id: String(uid), body: 'b' }],
+    ['draft_create', { subject: 's', body: 'b' }],
+    ['emails_modify', { email_ids: [String(uid)], mark_read: true }],
+    ['emails_modify', { email_ids: [String(uid)], delete: true }],
+    ['folder_create', { name: 'Nope' }],
+    ['folder_delete', { name: 'Nope' }]
+  ];
+  for (const [name, args] of blocked) {
+    const result = await call(name, { ...readOnly, ...args });
+    assert.equal(result.success, false, `${name} must be blocked`);
+    assert.match(result.error, /read-only/);
+  }
+  assert.equal((await env.messages('bob')).length, 1);
+  assert.equal((await env.messages('alice')).length, 0);
+});
+
+test('permanent deletion and folder deletion are locked by default', { skip }, async () => {
+  const uid = await env.seed('alice', { subject: 'Keep me' });
+  await call('folder_create', { name: 'Keep' });
+  const account = { account_name: 'alice_safe' };
+
+  const permanent = await call('emails_modify', { ...account, email_ids: [String(uid)], delete: true, permanent: true });
+  assert.equal(permanent.success, false);
+  assert.match(permanent.error, /ALLOW_PERMANENT_DELETE/);
+  const folder = await call('folder_delete', { ...account, name: 'Keep' });
+  assert.equal(folder.success, false);
+  assert.match(folder.error, /ALLOW_PERMANENT_DELETE/);
+  assert.equal((await env.messages('alice')).length, 1);
+
+  const soft = await call('emails_modify', { ...account, email_ids: [String(uid)], delete: true });
+  assert.equal(soft.success, true);
+  assert.equal((await env.messages('alice', 'Trash')).length, 1);
+});
+
+test('allow_delete=false blocks every kind of delete but not moves', { skip }, async () => {
+  const uid = await env.seed('alice', { subject: 'Stay' });
+  await call('folder_create', { name: 'Elsewhere' });
+  const account = { account_name: 'alice_nodelete' };
+
+  const soft = await call('emails_modify', { ...account, email_ids: [String(uid)], delete: true });
+  assert.equal(soft.success, false);
+  assert.match(soft.error, /ALLOW_DELETE/);
+  assert.equal((await env.messages('alice')).length, 1);
+
+  const moved = await call('emails_modify', { ...account, email_ids: [String(uid)], move_to_folder: 'Elsewhere' });
+  assert.equal(moved.success, true);
+});
+
+test('accounts_list reports the safety switches', { skip }, async () => {
+  const listed = await call('accounts_list');
+  const byName = Object.fromEntries(listed.accounts.map((a) => [a.name, a]));
+  assert.deepEqual(
+    [byName.alice.read_only, byName.alice.allow_delete, byName.alice.allow_permanent_delete],
+    [false, true, true]
+  );
+  assert.equal(byName.bob.read_only, true);
+  assert.equal(byName.alice_safe.allow_permanent_delete, false);
+  assert.equal(byName.alice_nodelete.allow_delete, false);
+});

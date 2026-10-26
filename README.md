@@ -129,6 +129,18 @@ SMTP only delivers a message; it does not put a copy in your Sent folder. Provid
 
 The folder is the one flagged `\Sent` by the server, falling back to `Sent`. Set `SENT_FOLDER` (or `"sent_folder"`) to use another one, e.g. `SENT_FOLDER="Gesendete Objekte"`. Send results then include `sent_copy` with `saved`, `folder` and, if storing failed, `error`; the mail itself is still delivered in that case. Leave it off for providers that already store sent mail, or you get duplicates.
 
+### Safety switches
+
+Per account (environment variable, or the lowercase key in `EMAIL_ACCOUNTS_JSON`):
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `READ_ONLY` | `false` | Only `accounts_list`, `emails_find` and `folders_list` work. Sending, replying, drafts, flag changes, moving, deleting and folder changes are refused, and searching does not mark mail as read. |
+| `ALLOW_DELETE` | `true` | `false` blocks `emails_modify` with `delete`. Moving messages to a folder stays possible. |
+| `ALLOW_PERMANENT_DELETE` | `false` | Must be `true` for `delete` with `permanent` and for `folder_delete`. Both cannot be undone. |
+
+`accounts_list` shows the active switches for every account.
+
 ## Tools
 
 | Tool | What it does |
@@ -137,10 +149,10 @@ The folder is the one flagged `\Sent` by the server, falling back to `Sent`. Set
 | `emails_find` | Search by text, sender, recipient, subject, date, read state, flag state, or attachments in INBOX or any other `folder`. Optionally return bodies and attachments. |
 | `email_send` | Send plain-text or HTML email with CC, BCC, sender aliases, and base64 attachments. |
 | `email_respond` | Reply, reply-all, or forward by email UID with threading and optional original attachments. |
-| `emails_modify` | Mark read/unread, flag/unflag, move messages to another folder, or delete them (to Trash by default, `permanent: true` to remove for good). Works on any source `folder`. |
+| `emails_modify` | Mark read/unread, flag/unflag, move messages to another folder, or delete them (to Trash by default; `permanent: true` removes for good and needs `ALLOW_PERMANENT_DELETE`). Works on any source `folder`. |
 | `draft_create` | Save a plain-text or HTML draft with optional recipients and attachments to the Drafts folder without sending it. |
 | `folder_create` | Create a folder or subfolder such as `Projects/2026`. |
-| `folder_delete` | Delete a folder and its messages. INBOX and special folders (Sent, Drafts, Trash, ...) are protected. |
+| `folder_delete` | Delete a folder and its messages (needs `ALLOW_PERMANENT_DELETE`). INBOX and special folders (Sent, Drafts, Trash, ...) are protected. |
 | `folders_list` | List folders with optional total and unread counts. |
 
 Every email tool accepts an optional `account_name`. Without it, the server uses `DEFAULT_EMAIL_ACCOUNT` or the first configured account. There is no application-level account-count limit.

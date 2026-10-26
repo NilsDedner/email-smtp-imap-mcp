@@ -149,7 +149,7 @@ async function searchEmailsInternal(
   try {
     // Open mailbox with timeout
     const mailbox = await withTimeout(
-      client.mailboxOpen(folder),
+      client.mailboxOpen(folder, { readOnly: Boolean(account.read_only) }),
       10000,
       'Mailbox open timed out'
     );

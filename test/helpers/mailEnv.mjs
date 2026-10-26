@@ -104,8 +104,9 @@ export async function startMailEnv() {
   });
   const smtpPort = smtp.server.address().port;
 
-  const accountConfig = (user) => ({
+  const accountConfig = (user, extra = {}) => ({
     save_to_sent: true,
+    ...extra,
     smtp: { host: '127.0.0.1', port: smtpPort, secure: false, user: user.user, password: user.pass },
     imap: { host: '127.0.0.1', port: imapPort, secure: false, user: user.user, password: user.pass }
   });
@@ -113,10 +114,24 @@ export async function startMailEnv() {
   return {
     imapPort,
     smtpPort,
-    accounts: { alice: accountConfig(USERS.alice), bob: accountConfig(USERS.bob) },
+    /**
+     * alice: unrestricted; bob: read-only; alice_safe / alice_nodelete: alice's mailbox with the
+     * default permanent-delete lock / with deleting disabled.
+     */
+    accounts: {
+      alice: accountConfig(USERS.alice, { allow_permanent_delete: true }),
+      bob: accountConfig(USERS.bob, { read_only: true }),
+      alice_safe: accountConfig(USERS.alice),
+      alice_nodelete: accountConfig(USERS.alice, { allow_delete: false })
+    },
     /** Env for the MCP server process / account loader */
     serverEnv: (extra = {}) => ({
-      EMAIL_ACCOUNTS_JSON: JSON.stringify({ alice: accountConfig(USERS.alice), bob: accountConfig(USERS.bob) }),
+      EMAIL_ACCOUNTS_JSON: JSON.stringify({
+        alice: accountConfig(USERS.alice, { allow_permanent_delete: true }),
+        bob: accountConfig(USERS.bob, { read_only: true }),
+        alice_safe: accountConfig(USERS.alice),
+        alice_nodelete: accountConfig(USERS.alice, { allow_delete: false })
+      }),
       DEFAULT_EMAIL_ACCOUNT: 'alice',
       ...extra
     }),

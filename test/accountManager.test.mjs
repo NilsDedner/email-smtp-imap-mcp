@@ -22,7 +22,10 @@ const managedKeys = [
   'IMAP_PASSWORD',
   'SENDER_EMAILS',
   'SAVE_TO_SENT',
-  'SENT_FOLDER'
+  'SENT_FOLDER',
+  'READ_ONLY',
+  'ALLOW_DELETE',
+  'ALLOW_PERMANENT_DELETE'
 ];
 
 function withEnvironment(values, callback) {
@@ -172,4 +175,31 @@ test('rejects invalid ports and boolean values before connecting', () => {
   }, () => {
     assert.throws(() => loadAccounts(), /SMTP_SECURE must be true or false/);
   });
+});
+
+test('reads safety switches from environment and JSON with safe defaults', () => {
+  const base = { SMTP_HOST: 's', SMTP_USER: 'u', SMTP_PASS: 'p', IMAP_HOST: 'i' };
+  const defaults = withEnvironment(base, () => loadAccounts().default);
+  assert.deepEqual(
+    [defaults.read_only, defaults.allow_delete, defaults.allow_permanent_delete],
+    [false, true, false]
+  );
+
+  const fromEnv = withEnvironment(
+    { ...base, READ_ONLY: 'true', ALLOW_DELETE: 'false', ALLOW_PERMANENT_DELETE: '1' },
+    () => loadAccounts().default
+  );
+  assert.deepEqual(
+    [fromEnv.read_only, fromEnv.allow_delete, fromEnv.allow_permanent_delete],
+    [true, false, true]
+  );
+
+  const account = { smtp: { host: 's', user: 'u', password: 'p' }, imap: { host: 'i' } };
+  const fromJson = withEnvironment(
+    { EMAIL_ACCOUNTS_JSON: JSON.stringify({ a: { ...account, read_only: true }, b: { ...account, allow_permanent_delete: true } }) },
+    () => loadAccounts()
+  );
+  assert.equal(fromJson.a.read_only, true);
+  assert.equal(fromJson.b.allow_permanent_delete, true);
+  assert.throws(() => withEnvironment({ ...base, READ_ONLY: 'maybe' }, () => loadAccounts()), /READ_ONLY/);
 });

@@ -17,6 +17,9 @@ export interface EmailAccount {
   sender_emails?: string[];
   save_to_sent?: boolean;
   sent_folder?: string;
+  read_only?: boolean;
+  allow_delete?: boolean;
+  allow_permanent_delete?: boolean;
 }
 
 export interface EmailAccounts {

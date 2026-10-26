@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Per-account safety switches `READ_ONLY`, `ALLOW_DELETE` and `ALLOW_PERMANENT_DELETE`; `accounts_list` reports them.
 - `draft_create` saves drafts to the IMAP Drafts folder without sending.
 - `folder_create` and `folder_delete` manage folders (INBOX and special-use folders are protected).
 - `emails_modify` can delete messages (to Trash, or permanently with `permanent: true`) and accepts a source `folder`.

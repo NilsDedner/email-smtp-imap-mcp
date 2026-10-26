@@ -5,7 +5,7 @@
 import { getAccount, loadAccounts } from './accountManager.js';
 import { searchEmails, modifyEmails, listFolders, createFolder, deleteFolder } from './imapService.js';
 import { sendEmail, replyToEmail, forwardEmail, createDraft } from './smtpService.js';
-import { EmailFilters } from './types.js';
+import { EmailAccount, EmailFilters } from './types.js';
 
 function requireString(value: unknown, fieldName: string): string {
   if (typeof value !== 'string' || value.trim() === '') {
@@ -55,6 +55,24 @@ function validateAttachments(value: unknown, fieldName: string): any[] | undefin
   return value;
 }
 
+/**
+ * Refuse state-changing operations on read-only accounts
+ */
+export function assertWritable(config: EmailAccount, action: string): void {
+  if (config.read_only) throw new Error(`Account is read-only: ${action} is disabled (READ_ONLY)`);
+}
+
+export function assertDeleteAllowed(config: EmailAccount, permanent: boolean, action: string): void {
+  assertWritable(config, action);
+  if (permanent) {
+    if (!config.allow_permanent_delete) {
+      throw new Error(`Permanent deletion is disabled for this account: ${action} requires ALLOW_PERMANENT_DELETE=true`);
+    }
+  } else if (config.allow_delete === false) {
+    throw new Error(`Deleting is disabled for this account: ${action} requires ALLOW_DELETE=true`);
+  }
+}
+
 export async function handleAccountsList(): Promise<string> {
   try {
     const accounts = loadAccounts();
@@ -70,7 +88,10 @@ export async function handleAccountsList(): Promise<string> {
         is_default: name === defaultAccount,
         smtp_configured: Boolean(accounts[name].smtp_host),
         imap_configured: Boolean(accounts[name].imap_host),
-        sender_count: accounts[name].sender_emails?.length || 1
+        sender_count: accounts[name].sender_emails?.length || 1,
+        read_only: Boolean(accounts[name].read_only),
+        allow_delete: accounts[name].allow_delete !== false,
+        allow_permanent_delete: Boolean(accounts[name].allow_permanent_delete)
       }))
     }, null, 2);
   } catch (error: any) {
@@ -158,6 +179,8 @@ export async function handleEmailsModify(args: any): Promise<string> {
     validateOptionalBoolean(args.delete, 'delete');
     validateOptionalBoolean(args.permanent, 'permanent');
     if (args.permanent && !args.delete) throw new Error('permanent requires delete to be true');
+    assertWritable(config, 'emails_modify');
+    if (args.delete) assertDeleteAllowed(config, Boolean(args.permanent), 'emails_modify delete');
     if (args.delete && args.move_to_folder) throw new Error('delete and move_to_folder cannot be combined');
     if (!args.mark_read && !args.mark_unread && !args.flag && !args.unflag && !args.move_to_folder && !args.delete) {
       throw new Error('At least one modification is required');
@@ -205,6 +228,7 @@ export async function handleEmailSend(args: any): Promise<string> {
     args = args || {};
     const { name, config } = getAccount(args.account_name);
 
+    assertWritable(config, 'email_send');
     const to = requireStringArray(args.to, 'to');
     const subject = requireString(args.subject, 'subject');
     const body = requireString(args.body, 'body');
@@ -250,6 +274,7 @@ export async function handleEmailRespond(args: any): Promise<string> {
     args = args || {};
     const { name, config } = getAccount(args.account_name);
 
+    assertWritable(config, 'email_respond');
     const emailId = requireString(args.email_id, 'email_id');
     const body = requireString(args.body, 'body');
     const to = validateOptionalStringArray(args.to, 'to');
@@ -345,6 +370,7 @@ export async function handleDraftCreate(args: any): Promise<string> {
     args = args || {};
     const { name, config } = getAccount(args.account_name);
 
+    assertWritable(config, 'draft_create');
     const subject = requireString(args.subject, 'subject');
     const body = requireString(args.body, 'body');
     const to = validateOptionalStringArray(args.to, 'to');
@@ -388,6 +414,7 @@ export async function handleFolderCreate(args: any): Promise<string> {
   try {
     args = args || {};
     const { name: accountName, config } = getAccount(args.account_name);
+    assertWritable(config, 'folder_create');
     const path = await createFolder(config, requireString(args.name, 'name'));
     return JSON.stringify({ success: true, account: accountName, folder: path }, null, 2);
   } catch (error: any) {
@@ -405,6 +432,7 @@ export async function handleFolderDelete(args: any): Promise<string> {
   try {
     args = args || {};
     const { name: accountName, config } = getAccount(args.account_name);
+    assertDeleteAllowed(config, true, 'folder_delete');
     const path = await deleteFolder(config, requireString(args.name, 'name'));
     return JSON.stringify({ success: true, account: accountName, deleted: path }, null, 2);
   } catch (error: any) {
