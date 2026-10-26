@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Added
+- `folder_rename` renames or moves folders; `emails_modify` can copy messages with `copy_to_folder`; `folders_list` reports parent, separator and special-use type.
+
+### Fixed
+- Moving, copying or deleting to a folder the server refuses (for example one that does not exist) is now reported as an error instead of counted as modified.
 - `attachment_get` downloads a single attachment; `emails_find` results list attachments in `attachment_list` without downloading them.
 - `draft_update`, `draft_send` and `draft_delete` complete the draft workflow; `draft_create` can answer an existing message with `reply_to_email_id`.
 - `email_respond` accepts a `folder` and flags the original `\Answered` (reply) or `$Forwarded` (forward); the result reports `original_flagged`.

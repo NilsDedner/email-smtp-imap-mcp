@@ -228,6 +228,7 @@ export async function modifyEmails(
     moveToFolder?: string;
     delete?: boolean;
     permanent?: boolean;
+    copyToFolder?: string;
     folder?: string;
   }
 ): Promise<{ success: boolean; modified: number; errors?: string[]; deleted_to?: string }> {
@@ -267,14 +268,23 @@ export async function modifyEmails(
           await client.messageFlagsRemove(uid, ['\\Flagged'], { uid: true });
         }
 
+        // ImapFlow resolves to false (instead of throwing) when the server refuses COPY/MOVE
+        if (options.copyToFolder) {
+          if (!await client.messageCopy(uid, options.copyToFolder, { uid: true })) {
+            throw new Error(`could not copy to "${options.copyToFolder}" (does the folder exist?)`);
+          }
+        }
+
         // Move to folder
         if (options.moveToFolder) {
-          await client.messageMove(uid, options.moveToFolder, { uid: true });
+          if (!await client.messageMove(uid, options.moveToFolder, { uid: true })) {
+            throw new Error(`could not move to "${options.moveToFolder}" (does the folder exist?)`);
+          }
         } else if (options.delete) {
           if (options.permanent) {
             await client.messageDelete(uid, { uid: true });
-          } else {
-            await client.messageMove(uid, trashFolder!, { uid: true });
+          } else if (!await client.messageMove(uid, trashFolder!, { uid: true })) {
+            throw new Error(`could not move to "${trashFolder}" (does the Trash folder exist?)`);
           }
         }
 
@@ -316,6 +326,27 @@ export async function createFolder(account: EmailAccount, path: string): Promise
     const result = await withTimeout(client.mailboxCreate(path), 30000, 'Creating folder timed out');
     if (!result.created) throw new Error(`Folder already exists: ${result.path}`);
     return result.path;
+  } finally {
+    await client.logout().catch(() => {});
+  }
+}
+
+/**
+ * Rename a folder, or move it elsewhere in the tree by giving a new path.
+ * INBOX and special-use folders (Sent, Drafts, Trash, ...) are protected.
+ */
+export async function renameFolder(account: EmailAccount, path: string, newPath: string): Promise<{ from: string; to: string }> {
+  if (path.toUpperCase() === 'INBOX') throw new Error('INBOX cannot be renamed');
+  if (path === newPath) throw new Error('new_name must differ from name');
+  const client = await createImapConnection(account);
+  try {
+    const folders = await client.list();
+    const match = folders.find((folder) => folder.path === path);
+    if (!match) throw new Error(`Folder not found: ${path}`);
+    if (match.specialUse) throw new Error(`Folder ${path} is a special-use folder (${match.specialUse}) and cannot be renamed`);
+    if (folders.some((folder) => folder.path === newPath)) throw new Error(`Folder already exists: ${newPath}`);
+    const result = await withTimeout(client.mailboxRename(path, newPath), 30000, 'Renaming folder timed out');
+    return { from: result.path, to: result.newPath };
   } finally {
     await client.logout().catch(() => {});
   }
@@ -464,7 +495,12 @@ async function listFoldersInternal(
     for (const mailbox of mailboxList) {
       const folder: EmailFolder = {
         name: mailbox.name,
-        path: mailbox.path
+        path: mailbox.path,
+        delimiter: mailbox.delimiter,
+        ...(mailbox.parentPath ? { parent: mailbox.parentPath } : {}),
+        ...(mailbox.specialUse ? { special_use: mailbox.specialUse } : {}),
+        subscribed: Boolean(mailbox.subscribed),
+        selectable: !mailbox.flags?.has('\\Noselect')
       };
 
       if (includeCounts) {

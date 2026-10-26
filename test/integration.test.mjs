@@ -91,6 +91,10 @@ test('emails_modify changes flags and moves messages', { skip }, async () => {
   const [moved] = await env.messages('alice', 'Archive');
   const back = await call('emails_modify', { folder: 'Archive', email_ids: [String(moved.uid)], move_to_folder: 'INBOX' });
   assert.equal(back.success, true);
+  const [back1] = await env.messages('alice');
+  const toNowhere = await call('emails_modify', { email_ids: [String(back1.uid)], move_to_folder: 'Nowhere' });
+  assert.equal(toNowhere.success, false);
+  assert.match(toNowhere.errors[0], /does the folder exist/);
   assert.deepEqual((await env.messages('alice')).map((m) => m.subject), ['Organize me']);
 });
 
@@ -437,4 +441,69 @@ test('attachment_get works from other folders and on read-only accounts', { skip
   const result = await call('attachment_get', { account_name: 'bob', folder: 'Trash', email_id: String(uid), filename: 'old.txt' });
   assert.equal(result.success, true);
   assert.equal(Buffer.from(result.content, 'base64').toString(), 'archived');
+});
+
+test('folders_list reports hierarchy, separator and special-use types', { skip }, async () => {
+  await call('folder_create', { name: 'Projects' });
+  await call('folder_create', { name: 'Projects/2026' });
+  const { folders } = await call('folders_list');
+  const byPath = Object.fromEntries(folders.map((f) => [f.path, f]));
+
+  assert.equal(byPath.Sent.special_use, '\\Sent');
+  assert.equal(byPath.Drafts.special_use, '\\Drafts');
+  assert.equal(byPath.Trash.special_use, '\\Trash');
+  assert.equal(byPath.Junk.special_use, '\\Junk');
+  assert.equal(byPath.INBOX.special_use, '\\Inbox');
+  assert.equal(byPath['Projects/2026'].delimiter, '/');
+  assert.equal(byPath['Projects/2026'].parent, 'Projects');
+  assert.equal(byPath['Projects/2026'].name, '2026');
+  assert.equal(byPath.Projects.parent, undefined);
+  assert.equal(byPath.Projects.subscribed, true);
+});
+
+test('folder_rename renames and moves folders with their messages', { skip }, async () => {
+  await call('folder_create', { name: 'Old' });
+  await call('folder_create', { name: 'Old/Sub' });
+  await call('folder_create', { name: 'Archive' });
+  await env.seed('alice', { folder: 'Old', subject: 'Inside old' });
+  await env.seed('alice', { folder: 'Old/Sub', subject: 'Inside sub' });
+
+  const renamed = await call('folder_rename', { name: 'Old', new_name: 'New' });
+  assert.equal(renamed.success, true);
+  assert.deepEqual([renamed.from, renamed.to], ['Old', 'New']);
+  assert.deepEqual((await env.messages('alice', 'New')).map((m) => m.subject), ['Inside old']);
+  assert.deepEqual((await env.messages('alice', 'New/Sub')).map((m) => m.subject), ['Inside sub']);
+  assert.equal(await env.messages('alice', 'Old'), null);
+
+  const moved = await call('folder_rename', { name: 'New', new_name: 'Archive/New' });
+  assert.equal(moved.success, true);
+  assert.deepEqual((await env.messages('alice', 'Archive/New/Sub')).map((m) => m.subject), ['Inside sub']);
+
+  for (const [name, new_name] of [['INBOX', 'X'], ['Sent', 'Gesendet'], ['Missing', 'X'], ['Archive', 'Archive/New'], ['Archive', 'Archive']]) {
+    assert.equal((await call('folder_rename', { name, new_name })).success, false, `${name} -> ${new_name}`);
+  }
+  assert.equal((await call('folder_rename', { account_name: 'bob', name: 'Archive', new_name: 'Z' })).success, false);
+});
+
+test('emails_modify copies messages and leaves the originals', { skip }, async () => {
+  const uid = await env.seed('alice', { subject: 'Duplicate me', flags: ['\\Flagged'] });
+  await call('folder_create', { name: 'Copies' });
+
+  const copied = await call('emails_modify', { email_ids: [String(uid)], copy_to_folder: 'Copies' });
+  assert.equal(copied.success, true);
+  assert.equal(copied.modified, 1);
+  assert.deepEqual((await env.messages('alice')).map((m) => m.subject), ['Duplicate me']);
+  const [copy] = await env.messages('alice', 'Copies');
+  assert.equal(copy.subject, 'Duplicate me');
+  assert.ok(copy.flags.has('\\Flagged'));
+
+  const missing = await call('emails_modify', { email_ids: [String(uid)], copy_to_folder: 'Nowhere' });
+  assert.equal(missing.success, false);
+
+  for (const extra of [{ move_to_folder: 'Copies' }, { delete: true }]) {
+    const conflict = await call('emails_modify', { email_ids: [String(uid)], copy_to_folder: 'Copies', ...extra });
+    assert.equal(conflict.success, false);
+    assert.match(conflict.error, /cannot be combined/);
+  }
+  assert.equal((await env.messages('alice', 'Copies')).length, 1);
 });

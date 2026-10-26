@@ -138,6 +138,10 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
           default: "INBOX",
           description: "Folder the email IDs belong to (IDs are per folder; use the same folder as in emails_find)"
         },
+        copy_to_folder: {
+          type: "string",
+          description: "Copy emails to another folder, leaving the originals in place. Cannot be combined with move_to_folder or delete."
+        },
         delete: {
           type: "boolean",
           description: "Delete emails: move them to the Trash folder (recoverable)"
@@ -451,6 +455,23 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
   },
 
   /**
+   * Rename or move a folder
+   */
+  "folder_rename": {
+    name: "folder_rename",
+    description: "Rename a folder, or move it in the folder tree by giving a new path (e.g. 'Projects/2026' to 'Archive/2026'). Messages and subfolders stay with it. INBOX and special folders (Sent, Drafts, Trash, ...) cannot be renamed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account_name: { type: "string", description: "Name of the email account to use" },
+        name: { type: "string", description: "Current folder path (from folders_list)" },
+        new_name: { type: "string", description: "New folder path" }
+      },
+      required: ["name", "new_name"]
+    }
+  },
+
+  /**
    * Delete a folder
    */
   "folder_delete": {
@@ -471,7 +492,7 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
    */
   "folders_list": {
     name: "folders_list",
-    description: "List all available email folders/labels in your account. Use this to see your folder structure and organize emails.",
+    description: "List all email folders with their path, parent, separator and special-use type (\\Sent, \\Drafts, \\Trash, \\Junk, ...). Use this to see the folder tree and find the right folder paths.",
     inputSchema: {
       type: "object",
       properties: {

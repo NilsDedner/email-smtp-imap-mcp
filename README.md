@@ -150,14 +150,15 @@ Per account (environment variable, or the lowercase key in `EMAIL_ACCOUNTS_JSON`
 | `attachment_get` | Download one attachment (base64, up to 25 MB) by filename or part id, from INBOX or any `folder`. |
 | `email_send` | Send plain-text or HTML email with CC, BCC, sender aliases, and base64 attachments. |
 | `email_respond` | Reply, reply-all, or forward by email UID (from INBOX or any `folder`) with threading and optional original attachments. The original is flagged `\Answered` or `$Forwarded`. |
-| `emails_modify` | Mark read/unread, flag/unflag, move messages to another folder, or delete them (to Trash by default; `permanent: true` removes for good and needs `ALLOW_PERMANENT_DELETE`). Works on any source `folder`. |
+| `emails_modify` | Mark read/unread, flag/unflag, move or copy messages to another folder (`move_to_folder`, `copy_to_folder`), or delete them (to Trash by default; `permanent: true` removes for good and needs `ALLOW_PERMANENT_DELETE`). Works on any source `folder`. |
 | `draft_create` | Save a plain-text or HTML draft with optional recipients and attachments to the Drafts folder without sending it. With `reply_to_email_id` the draft answers an existing message (recipient, `Re:` subject, threading headers and quoted original are filled in). |
 | `draft_update` | Change fields of a draft (recipients, subject, body, attachments). The draft is rewritten, so it gets a new `email_id`. |
 | `draft_send` | Send a stored draft and remove it from the Drafts folder. |
 | `draft_delete` | Delete drafts: to Trash by default, `permanent: true` needs `ALLOW_PERMANENT_DELETE`. |
 | `folder_create` | Create a folder or subfolder such as `Projects/2026`. |
+| `folder_rename` | Rename a folder or move it in the tree (`Projects/2026` to `Archive/2026`). Messages and subfolders go with it. INBOX and special folders are protected. |
 | `folder_delete` | Delete a folder and its messages (needs `ALLOW_PERMANENT_DELETE`). INBOX and special folders (Sent, Drafts, Trash, ...) are protected. |
-| `folders_list` | List folders with optional total and unread counts. |
+| `folders_list` | List folders with path, parent, separator, special-use type (`\Sent`, `\Drafts`, `\Trash`, ...) and optional total and unread counts. |
 
 Every email tool accepts an optional `account_name`. Without it, the server uses `DEFAULT_EMAIL_ACCOUNT` or the first configured account. There is no application-level account-count limit.
 

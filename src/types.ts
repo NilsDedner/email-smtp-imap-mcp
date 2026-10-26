@@ -72,6 +72,11 @@ export interface EmailMessage {
 export interface EmailFolder {
   name: string;
   path: string;
+  delimiter?: string;
+  parent?: string;
+  special_use?: string;
+  subscribed?: boolean;
+  selectable?: boolean;
   unread_count?: number;
   total_count?: number;
 }

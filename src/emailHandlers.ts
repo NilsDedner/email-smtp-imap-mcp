@@ -3,7 +3,7 @@
  */
 
 import { getAccount, loadAccounts } from './accountManager.js';
-import { searchEmails, modifyEmails, listFolders, getAttachment, createFolder, deleteFolder, resolveDraftsFolder } from './imapService.js';
+import { searchEmails, modifyEmails, listFolders, getAttachment, createFolder, deleteFolder, renameFolder, resolveDraftsFolder } from './imapService.js';
 import { sendEmail, replyToEmail, forwardEmail } from './smtpService.js';
 import { createDraft, updateDraft, sendDraft } from './draftService.js';
 import { EmailAccount, EmailFilters } from './types.js';
@@ -176,6 +176,10 @@ export async function handleEmailsModify(args: any): Promise<string> {
       validateOptionalBoolean(args[booleanField], booleanField);
     }
     validateOptionalString(args.move_to_folder, 'move_to_folder');
+    const copyToFolder = validateOptionalString(args.copy_to_folder, 'copy_to_folder');
+    if (copyToFolder && (args.move_to_folder || args.delete)) {
+      throw new Error('copy_to_folder cannot be combined with move_to_folder or delete (use move_to_folder to move)');
+    }
     const folder = validateOptionalString(args.folder, 'folder');
     validateOptionalBoolean(args.delete, 'delete');
     validateOptionalBoolean(args.permanent, 'permanent');
@@ -183,7 +187,7 @@ export async function handleEmailsModify(args: any): Promise<string> {
     assertWritable(config, 'emails_modify');
     if (args.delete) assertDeleteAllowed(config, Boolean(args.permanent), 'emails_modify delete');
     if (args.delete && args.move_to_folder) throw new Error('delete and move_to_folder cannot be combined');
-    if (!args.mark_read && !args.mark_unread && !args.flag && !args.unflag && !args.move_to_folder && !args.delete) {
+    if (!args.mark_read && !args.mark_unread && !args.flag && !args.unflag && !args.move_to_folder && !args.delete && !copyToFolder) {
       throw new Error('At least one modification is required');
     }
     if (args.mark_read && args.mark_unread) {
@@ -199,6 +203,7 @@ export async function handleEmailsModify(args: any): Promise<string> {
       flag: args.flag,
       unflag: args.unflag,
       moveToFolder: args.move_to_folder,
+      copyToFolder,
       delete: args.delete,
       permanent: args.permanent,
       folder
@@ -550,6 +555,24 @@ export async function handleFolderCreate(args: any): Promise<string> {
     return JSON.stringify({
       success: false,
       error: error.message || 'Failed to create folder'
+    }, null, 2);
+  }
+}
+
+/**
+ * Handle folder_rename tool
+ */
+export async function handleFolderRename(args: any): Promise<string> {
+  try {
+    args = args || {};
+    const { name: accountName, config } = getAccount(args.account_name);
+    assertWritable(config, 'folder_rename');
+    const result = await renameFolder(config, requireString(args.name, 'name'), requireString(args.new_name, 'new_name'));
+    return JSON.stringify({ success: true, account: accountName, ...result }, null, 2);
+  } catch (error: any) {
+    return JSON.stringify({
+      success: false,
+      error: error.message || 'Failed to rename folder'
     }, null, 2);
   }
 }
