@@ -342,54 +342,28 @@ export async function modifyEmails(
 }
 
 /**
- * Pick a folder by its RFC 6154 special-use flag, else a fallback name.
+ * Common names of the standard folders, used when a server does not flag them with RFC 6154
+ * special-use attributes (German providers often use localized names only).
+ */
+const FOLDER_ALIASES: Record<string, string[]> = {
+  '\\Sent': ['sent', 'sent items', 'sent messages', 'gesendet', 'gesendete objekte', 'gesendete elemente'],
+  '\\Drafts': ['drafts', 'entwürfe', 'entwurf'],
+  '\\Trash': ['trash', 'papierkorb', 'deleted items', 'deleted messages', 'gelöschte elemente', 'gelöschte objekte']
+};
+
+/**
+ * Pick a folder by its RFC 6154 special-use flag, else by a well-known name, else a fallback name.
  */
 export function resolveSpecialFolder(
   folders: Array<{ path: string; specialUse?: string }>,
   specialUse: string,
   fallback: string
 ): string {
-  return folders.find((folder) => folder.specialUse === specialUse)?.path || fallback;
-}
-
-/**
- * The spam folder: the one flagged \\Junk, else a common name (Junk, Spam, ...)
- */
-export function resolveJunkFolder(folders: Array<{ path: string; specialUse?: string }>): string {
-  const flagged = folders.find((folder) => folder.specialUse === '\\Junk');
+  const flagged = folders.find((folder) => folder.specialUse === specialUse);
   if (flagged) return flagged.path;
-  const names = ['junk', 'spam', 'junk e-mail', 'junk email', 'bulk mail'];
-  const byName = folders.find((folder) => names.includes(folder.path.toLowerCase()));
-  if (byName) return byName.path;
-  throw new Error('No Junk/Spam folder found; create one or use move_to_folder');
-}
-
-/**
- * Permanently remove all (or only old) messages from a Trash or Junk folder
- */
-export async function emptyFolder(
-  account: EmailAccount,
-  path: string,
-  olderThanDays?: number
-): Promise<{ folder: string; deleted: number }> {
-  const client = await createImapConnection(account);
-  try {
-    const match = (await client.list()).find((folder) => folder.path === path);
-    if (!match) throw new Error(`Folder not found: ${path}`);
-    if (match.specialUse !== '\\Trash' && match.specialUse !== '\\Junk') {
-      throw new Error(`Only Trash and Junk folders can be emptied; ${path} is not one (use emails_modify to delete messages elsewhere)`);
-    }
-    await client.mailboxOpen(path);
-    const criteria: any = olderThanDays === undefined
-      ? { all: true }
-      : { before: new Date(Date.now() - olderThanDays * 86400000) };
-    const uids = await client.search(criteria, { uid: true });
-    if (!uids || uids.length === 0) return { folder: path, deleted: 0 };
-    await withTimeout(client.messageDelete(uids, { uid: true }), 60000, 'Emptying folder timed out');
-    return { folder: path, deleted: uids.length };
-  } finally {
-    await client.logout().catch(() => {});
-  }
+  const aliases = FOLDER_ALIASES[specialUse] || [];
+  const named = folders.find((folder) => aliases.includes(folder.path.toLowerCase()));
+  return named ? named.path : fallback;
 }
 
 /**
@@ -517,7 +491,7 @@ export function resolveSentFolder(
   configured?: string
 ): string {
   if (configured) return configured;
-  return folders.find((folder) => folder.specialUse === '\\Sent')?.path || 'Sent';
+  return resolveSpecialFolder(folders, '\\Sent', 'Sent');
 }
 
 /**

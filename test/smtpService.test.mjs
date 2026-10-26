@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { buildReplyRecipients, buildSentCopy, resolveFromEmail } from '../build/smtpService.js';
-import { resolveSentFolder } from '../build/imapService.js';
+import { resolveSentFolder, resolveSpecialFolder } from '../build/imapService.js';
 
 const account = {
   smtp_host: 'smtp.example.test',
@@ -91,4 +91,14 @@ test('new tools validate input before connecting', async () => {
   assert.match(JSON.parse(await handleEmailsModify({ email_ids: ['1'], permanent: true })).error, /permanent requires delete/);
   assert.match(JSON.parse(await handleEmailsModify({ email_ids: ['1'], delete: true, move_to_folder: 'A' })).error, /cannot be combined/);
   assert.match(JSON.parse(await handleFolderDelete({ name: 'INBOX' })).error, /INBOX cannot be deleted/);
+});
+
+test('falls back to well-known localized folder names when nothing is flagged', () => {
+  const german = [{ path: 'INBOX' }, { path: 'Gesendete Objekte' }, { path: 'Entwürfe' }, { path: 'Papierkorb' }, { path: 'Spam' }];
+  assert.equal(resolveSentFolder(german), 'Gesendete Objekte');
+  assert.equal(resolveSpecialFolder(german, '\\Drafts', 'Drafts'), 'Entwürfe');
+  assert.equal(resolveSpecialFolder(german, '\\Trash', 'Trash'), 'Papierkorb');
+  assert.equal(resolveSpecialFolder([{ path: 'INBOX' }], '\\Trash', 'Trash'), 'Trash');
+  const flagged = [{ path: 'Papierkorb' }, { path: 'Deleted Items', specialUse: '\\Trash' }];
+  assert.equal(resolveSpecialFolder(flagged, '\\Trash', 'Trash'), 'Deleted Items');
 });

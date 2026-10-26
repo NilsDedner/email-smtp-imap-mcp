@@ -1,5 +1,8 @@
 /**
- * Live test against two real mailboxes (e.g. IONOS). Run with `npm run test:live`.
+ * Live test against real mailboxes (e.g. IONOS). Run with `npm run test:live`.
+ *
+ * Needs one mailbox (A). Mail is then sent to A itself and the forward goes to LIVE_EXTERNAL_TO,
+ * an address you control. With a second mailbox (B) delivery is checked between A and B instead.
  *
  * Safety: every message the test creates carries a unique run id in its subject, all
  * folders it creates are named after that id, and cleanup only ever selects by that id.
@@ -16,8 +19,14 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 dotenv.config({ path: path.resolve('.env.live'), quiet: true });
 
 const e = process.env;
-const configured = ['LIVE_SMTP_HOST', 'LIVE_IMAP_HOST', 'LIVE_A_USER', 'LIVE_A_PASS', 'LIVE_B_USER', 'LIVE_B_PASS'].every((key) => e[key]);
+const hasB = Boolean(e.LIVE_B_USER && e.LIVE_B_PASS);
+const configured = ['LIVE_SMTP_HOST', 'LIVE_IMAP_HOST', 'LIVE_A_USER', 'LIVE_A_PASS'].every((key) => e[key]) && (hasB || e.LIVE_EXTERNAL_TO);
 const skip = configured ? false : 'Fill .env.live (see .env.live.example) to run the live test';
+
+// Where test mail is delivered and which account reads it
+const RX = hasB ? 'b' : 'a';
+const RECIPIENT = hasB ? e.LIVE_B_USER : e.LIVE_A_USER;
+const FORWARD_TO = hasB ? e.LIVE_A_USER : e.LIVE_EXTERNAL_TO;
 
 const RUN = `MCP-LIVE-${Date.now().toString(36)}`;
 const FOLDER = RUN;
@@ -27,6 +36,7 @@ let client;
 const soft = (name, ok, detail = '') => findings.push(`${ok ? 'ok  ' : 'NOTE'} ${name}${detail ? ` (${detail})` : ''}`);
 
 async function call(name, args = {}) {
+  if (DELAY) await pause(DELAY);
   const result = await client.callTool({ name, arguments: args });
   return JSON.parse(result.content[0].text);
 }
@@ -49,6 +59,10 @@ async function waitFor(description, fn, timeoutMs = 120000) {
 
 const find = async (account, folder, subject) =>
   (await ok('emails_find', { account_name: account, folder, filters: { subject } })).emails;
+const findExact = async (account, folder, subject) => (await find(account, folder, subject)).filter((m) => m.subject === subject);
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const DELAY = Number(e.LIVE_DELAY_MS ?? 250);
 
 before(async () => {
   if (skip) return;
@@ -66,7 +80,10 @@ before(async () => {
     env: {
       PATH: process.env.PATH || '',
       DEFAULT_EMAIL_ACCOUNT: 'a',
-      EMAIL_ACCOUNTS_JSON: JSON.stringify({ a: account(e.LIVE_A_USER, e.LIVE_A_PASS), b: account(e.LIVE_B_USER, e.LIVE_B_PASS) })
+      EMAIL_ACCOUNTS_JSON: JSON.stringify({
+        a: account(e.LIVE_A_USER, e.LIVE_A_PASS),
+        ...(hasB ? { b: account(e.LIVE_B_USER, e.LIVE_B_PASS) } : {})
+      })
     }
   }));
 });
@@ -74,10 +91,12 @@ before(async () => {
 after(async () => {
   if (skip || !client) return;
   // Remove everything carrying the run id, in every folder of both accounts
-  for (const accountName of ['a', 'b']) {
+  for (const accountName of hasB ? ['a', 'b'] : ['a']) {
     try {
       const folders = (await call('folders_list', { account_name: accountName })).folders || [];
-      for (const folder of folders.filter((f) => f.selectable !== false && !f.path.startsWith(FOLDER))) {
+      // Test mail only ever lands in INBOX, the special folders and the test folders
+      const places = folders.filter((f) => f.selectable !== false && (f.path === 'INBOX' || (f.special_use && f.special_use !== '\\Inbox') || f.path === FOLDER || f.path.startsWith(`${FOLDER}/`) || f.path.startsWith(`${FOLDER}.`)));
+      for (const folder of places) {
         const selection = { account_name: accountName, folder: folder.path, filters: { subject: RUN } };
         const dry = await call('emails_modify', { ...selection, dry_run: true });
         if (dry.matched > 0) await call('emails_modify', { ...selection, delete: true, permanent: true, expected_count: dry.matched });
@@ -118,7 +137,7 @@ test('folders: special-use detection, create, nest, rename', { skip }, async () 
 
 test('drafts: create, update, send, delivery to the second account', { skip }, async () => {
   const subject = `${RUN} draft`;
-  const draft = await ok('draft_create', { to: [e.LIVE_B_USER], subject, body: 'first', body_type: 'plain' });
+  const draft = await ok('draft_create', { to: [RECIPIENT], subject, body: 'first', body_type: 'plain' });
   soft('draft append reports a UID (UIDPLUS)', Boolean(draft.email_id), draft.email_id ? '' : 'found via Message-ID search instead');
   assert.ok(draft.email_id, 'draft must be addressable');
 
@@ -133,17 +152,19 @@ test('drafts: create, update, send, delivery to the second account', { skip }, a
   assert.equal(sent.sent_copy?.saved, true, `sent copy not saved: ${JSON.stringify(sent.sent_copy)}`);
   soft('Sent folder used', true, sent.sent_copy.folder);
 
-  const delivered = await waitFor('delivery to B', async () => (await find('b', 'INBOX', subject))[0]);
-  assert.match(delivered.body || (await ok('emails_find', { account_name: 'b', filters: { subject }, include_content: true })).emails[0].body, /second/);
+  const delivered = await waitFor('delivery', async () => (await findExact(RX, 'INBOX', subject))[0]);
+  assert.ok(delivered);
+  const withBody = await ok('emails_find', { account_name: RX, filters: { subject }, include_content: true });
+  assert.match(withBody.emails[0].body, /second/);
   assert.equal((await find('a', 'Drafts', subject)).length, 0);
-  assert.equal((await find('a', sent.sent_copy.folder, subject)).length, 1);
+  assert.equal((await findExact('a', sent.sent_copy.folder, subject)).length, 1);
 });
 
 test('send with attachment, list and download it, reply and forward flag the original', { skip }, async () => {
   const subject = `${RUN} attach`;
   const content = Buffer.from([0, 1, 2, 250, 255, 10, 13, 65]);
   await ok('email_send', {
-    to: [e.LIVE_B_USER],
+    to: [RECIPIENT],
     subject,
     body: 'with file',
     body_type: 'plain',
@@ -152,26 +173,31 @@ test('send with attachment, list and download it, reply and forward flag the ori
       { filename: 'Übersicht März.txt', content: Buffer.from('umlaut').toString('base64'), content_type: 'text/plain' }
     ]
   });
-  const mail = await waitFor('attachment mail at B', async () => (await find('b', 'INBOX', subject))[0]);
+  const mail = await waitFor('attachment mail', async () => (await findExact(RX, 'INBOX', subject))[0]);
   assert.deepEqual(mail.attachment_list.map((a) => a.filename).sort(), ['data.bin', 'Übersicht März.txt']);
 
-  const file = await ok('attachment_get', { account_name: 'b', email_id: mail.id, filename: 'data.bin' });
+  const file = await ok('attachment_get', { account_name: RX, email_id: mail.id, filename: 'data.bin' });
   assert.deepEqual(Buffer.from(file.content, 'base64'), content);
-  const umlaut = await ok('attachment_get', { account_name: 'b', email_id: mail.id, filename: 'Übersicht März.txt' });
+  const umlaut = await ok('attachment_get', { account_name: RX, email_id: mail.id, filename: 'Übersicht März.txt' });
   assert.equal(Buffer.from(umlaut.content, 'base64').toString(), 'umlaut');
 
-  const reply = await ok('email_respond', { account_name: 'b', email_id: mail.id, body: 'got it', body_type: 'plain' });
+  const reply = await ok('email_respond', { account_name: RX, email_id: mail.id, body: 'got it', body_type: 'plain' });
   soft('\\Answered set on original', reply.original_flagged === true);
-  const replied = await waitFor('reply at A', async () => (await find('a', 'INBOX', `Re: ${subject}`))[0]);
-  assert.ok(replied);
+  const replyAt = hasB ? 'a' : RX;
+  assert.ok(await waitFor('reply', async () => (await find(replyAt, 'INBOX', `Re: ${subject}`))[0]));
 
-  const forward = await ok('email_respond', { account_name: 'b', email_id: mail.id, response_type: 'forward', to: [e.LIVE_A_USER], body: 'fyi', body_type: 'plain' });
+  const forward = await ok('email_respond', { account_name: RX, email_id: mail.id, response_type: 'forward', to: [FORWARD_TO], body: 'fyi', body_type: 'plain' });
   soft('$Forwarded keyword stored by the server', forward.original_flagged === true);
-  await waitFor('forward at A', async () => (await find('a', 'INBOX', `Fwd: ${subject}`))[0]);
+  if (hasB) {
+    await waitFor('forward at A', async () => (await find('a', 'INBOX', `Fwd: ${subject}`))[0]);
+  } else {
+    soft('forward sent to the external address', true, `${FORWARD_TO}: subject "Fwd: ${subject}", check it arrived`);
+  }
 
-  const flags = (await find('b', 'INBOX', subject))[0];
-  soft('answered flag visible in search', (await ok('emails_find', { account_name: 'b', filters: { subject, is_answered: true } })).count === 1);
-  assert.ok(flags);
+  const answered = await ok('emails_find', { account_name: RX, filters: { subject, is_answered: true } });
+  soft('answered flag visible in search', answered.emails.some((m) => m.subject === subject));
+  const forwarded = await ok('emails_find', { account_name: RX, filters: { subject, is_forwarded: true } });
+  soft('forwarded keyword visible in search', forwarded.emails.some((m) => m.subject === subject));
 });
 
 test('organizing: flags, move, copy, spam, paging, bulk and delete', { skip }, async () => {
