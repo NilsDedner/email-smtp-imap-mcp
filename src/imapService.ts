@@ -34,9 +34,9 @@ export function describeError(error: any): string {
 }
 
 /**
- * Create IMAP connection with timeout and error handling
+ * Open a new IMAP connection with timeout and error handling
  */
-async function createImapConnection(account: EmailAccount): Promise<ImapFlow> {
+async function connectImap(account: EmailAccount, pooled = false): Promise<ImapFlow> {
   // Validate account configuration
   if (!account.imap_host) {
     throw new Error('IMAP host not configured. Set IMAP_HOST or EMAIL_ACCOUNTS_JSON with imap.host');
@@ -57,6 +57,7 @@ async function createImapConnection(account: EmailAccount): Promise<ImapFlow> {
       pass: account.imap_pass
     },
     logger: imapLogger(), // Off by default: logging to stdout would corrupt the MCP stdio stream
+    disableAutoIdle: pooled, // A parked connection stays quiet; tools that wait for mail open their own
     connectionTimeout: 15000, // 15 second connection timeout
     greetingTimeout: 10000, // 10 second greeting timeout
     socketTimeout: 60000 // 60 second socket timeout for operations
@@ -88,6 +89,117 @@ async function createImapConnection(account: EmailAccount): Promise<ImapFlow> {
   }
 
   return client;
+}
+
+/**
+ * Connections are kept open briefly and reused, because logging in is the slowest part of most
+ * operations and providers rate-limit logins. IMAP_KEEPALIVE_SECONDS=0 opens one connection per call.
+ */
+interface PoolEntry {
+  client?: ImapFlow;
+  busy: boolean;
+  waiters: Array<() => void>;
+  timer?: NodeJS.Timeout;
+  lastUsed: number;
+}
+
+const pool = new Map<string, PoolEntry>();
+const LIVENESS_CHECK_AFTER_MS = 10000;
+
+function keepAliveMs(): number {
+  const raw = process.env.IMAP_KEEPALIVE_SECONDS;
+  if (raw === undefined || raw === '') return 30000;
+  const seconds = Number(raw);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : 30000;
+}
+
+function poolKey(account: EmailAccount): string {
+  return [account.imap_host, account.imap_port, account.imap_secure, account.imap_user].join('|');
+}
+
+function dropClient(entry: PoolEntry): void {
+  const client = entry.client;
+  entry.client = undefined;
+  if (client) client.logout().catch(() => {});
+}
+
+function release(entry: PoolEntry): void {
+  entry.busy = false;
+  entry.lastUsed = Date.now();
+  if (entry.client && !entry.client.usable) entry.client = undefined;
+  const next = entry.waiters.shift();
+  if (next) {
+    next();
+    return;
+  }
+  entry.timer = setTimeout(() => dropClient(entry), keepAliveMs());
+  entry.timer.unref();
+}
+
+/**
+ * Get a connection for the account. The returned client behaves like an ImapFlow client, but logout()
+ * hands it back to the pool instead of closing it. One operation at a time uses a connection.
+ */
+async function createImapConnection(account: EmailAccount): Promise<ImapFlow> {
+  if (keepAliveMs() === 0) return connectImap(account);
+
+  const key = poolKey(account);
+  let entry = pool.get(key);
+  if (!entry) {
+    entry = { busy: false, waiters: [], lastUsed: 0 };
+    pool.set(key, entry);
+  }
+  while (entry.busy) await new Promise<void>((resolve) => entry!.waiters.push(resolve));
+  entry.busy = true;
+  if (entry.timer) clearTimeout(entry.timer);
+
+  try {
+    if (entry.client && entry.client.usable && Date.now() - entry.lastUsed > LIVENESS_CHECK_AFTER_MS) {
+      await withTimeout(entry.client.noop(), 5000, 'Connection check timed out').catch(() => dropClient(entry!));
+    }
+    if (!entry.client || !entry.client.usable) {
+      entry.client = undefined;
+      entry.client = await connectImap(account, true);
+    }
+  } catch (error) {
+    release(entry);
+    throw error;
+  }
+
+  const held = entry;
+  const client = held.client!;
+  let released = false;
+  return new Proxy(client, {
+    get(target, property) {
+      if (property === 'logout') {
+        return async () => {
+          if (released) return;
+          released = true;
+          // Hand the connection back without a selected mailbox: a leftover read-only selection would
+          // silently drop the flags of a later APPEND to the same folder
+          if (target.usable && target.mailbox) await target.mailboxClose().catch(() => {});
+          release(held);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    }
+  });
+}
+
+/**
+ * Close all parked connections, e.g. when the MCP client disconnects
+ */
+export async function closeImapConnections(): Promise<void> {
+  const closing: Promise<unknown>[] = [];
+  for (const entry of pool.values()) {
+    if (entry.timer) clearTimeout(entry.timer);
+    const client = entry.client;
+    entry.client = undefined;
+    if (client) closing.push(client.logout().catch(() => {}));
+  }
+  pool.clear();
+  await Promise.all(closing);
 }
 
 /**

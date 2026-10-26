@@ -30,6 +30,7 @@ import {
   handleFolderDelete
 } from "./emailHandlers.js";
 import { loadEnvironment } from './environment.js';
+import { closeImapConnections } from './imapService.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -191,6 +192,11 @@ async function runServer() {
     await server.connect(transport);
 
     logToFile("Email MCP Server started successfully");
+
+    // The client is gone: close parked IMAP connections instead of waiting for their idle timeout
+    process.stdin.on('close', () => {
+      closeImapConnections().finally(() => process.exit(0));
+    });
 
   } catch (error) {
     logToFile(`Server failed to start: ${error}`);

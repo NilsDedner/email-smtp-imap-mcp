@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { readFile, rm } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import test, { after, before, beforeEach } from 'node:test';
 
@@ -834,4 +837,45 @@ test('custom keywords can be added, searched, listed and removed', { skip }, asy
   const conflict = await call('emails_find', { filters: { keyword: 'Invoice', is_forwarded: true } });
   assert.equal(conflict.success, false);
   assert.equal((await call('emails_modify', { account_name: 'bob', email_ids: ['1'], add_keywords: ['X'] })).success, false);
+});
+
+async function countConnections(keepAlive, calls) {
+  const logFile = path.join(os.tmpdir(), `imap-pool-${process.pid}-${keepAlive}.log`);
+  await rm(logFile, { force: true });
+  const local = new Client({ name: 'pool-test', version: '1.0.0' });
+  await local.connect(new StdioClientTransport({
+    command: process.execPath,
+    args: [path.resolve('build/index.js')],
+    env: { PATH: process.env.PATH || '', IMAP_DEBUG_LOG: logFile, IMAP_KEEPALIVE_SECONDS: String(keepAlive), ...env.serverEnv() }
+  }));
+  try {
+    for (let i = 0; i < calls; i++) {
+      const result = JSON.parse((await local.callTool({ name: i % 2 ? 'folders_list' : 'emails_find', arguments: {} })).content[0].text);
+      assert.equal(result.success, true, result.error);
+    }
+    // Two calls at once must queue on the shared connection, not break it
+    const parallel = await Promise.all([1, 2, 3].map(() => local.callTool({ name: 'emails_find', arguments: { limit: 1 } })));
+    for (const item of parallel) assert.equal(JSON.parse(item.content[0].text).success, true);
+  } finally {
+    await local.close();
+  }
+  const lines = (await readFile(logFile, 'utf8').catch(() => '')).split('\n').filter(Boolean);
+  return new Set(lines.map((line) => JSON.parse(line.slice(line.indexOf('{'))).cid).filter(Boolean)).size;
+}
+
+test('IMAP connections are reused between calls unless keepalive is off', { skip }, async () => {
+  await env.seed('alice', { subject: 'Pooling' });
+  const pooled = await countConnections(30, 6);
+  const unpooled = await countConnections(0, 6);
+  assert.equal(pooled, 1, 'one connection serves all calls');
+  assert.ok(unpooled >= 9, `without keepalive every call connects (saw ${unpooled})`);
+});
+
+test('a dropped connection is replaced transparently', { skip }, async () => {
+  const first = await call('emails_find', {});
+  assert.equal(first.success, true);
+  // Kill all of alice's sessions on the server side
+  execFileSync('docker', ['compose', '-p', `mcp-test-${process.pid}`, '-f', path.resolve('test/docker/compose.yml'), 'exec', '-T', 'dovecot', 'doveadm', 'kick', 'alice@example.test'], { stdio: 'ignore' });
+  const second = await call('emails_find', {});
+  assert.equal(second.success, true, second.error);
 });

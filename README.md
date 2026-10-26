@@ -141,6 +141,10 @@ Per account (environment variable, or the lowercase key in `EMAIL_ACCOUNTS_JSON`
 
 `accounts_list` shows the active switches for every account.
 
+### Connections
+
+IMAP connections are kept open for 30 seconds after use and reused, because logging in is the slowest part of most operations and some providers limit logins. Set `IMAP_KEEPALIVE_SECONDS` to change the time, or to `0` to open one connection per call. A connection the server has closed is replaced automatically, and parked connections are closed when the MCP client disconnects.
+
 ### Bulk actions
 
 `emails_modify` can act on everything that matches `filters` and/or `query` instead of a list of IDs, up to 500 emails per call. A selection must be confirmed in two steps: call it once with `dry_run: true` to see how many emails match plus a sample, then repeat it with `expected_count` set to that number. If the count has changed in the meantime, the call is refused. A selection without any filter or query is rejected.
