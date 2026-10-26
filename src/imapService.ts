@@ -314,6 +314,7 @@ export async function createFolder(account: EmailAccount, path: string): Promise
   const client = await createImapConnection(account);
   try {
     const result = await withTimeout(client.mailboxCreate(path), 30000, 'Creating folder timed out');
+    if (!result.created) throw new Error(`Folder already exists: ${result.path}`);
     return result.path;
   } finally {
     await client.logout().catch(() => {});

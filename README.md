@@ -173,6 +173,8 @@ npm ci
 npm test
 ```
 
+`npm test` also runs integration tests against a real Dovecot IMAP server in Docker (`test/docker`), with an SMTP stub that delivers mail between two test accounts. They are skipped automatically when Docker is not available.
+
 Run the compiled stdio server with `npm start`. Build a production container with `docker build -t email-smtp-imap-mcp .`.
 
 ## Contributing
