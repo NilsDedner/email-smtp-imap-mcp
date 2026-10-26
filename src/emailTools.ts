@@ -232,6 +232,11 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
           type: "string",
           description: "ID of the email to respond to (from emails_find results)"
         },
+        folder: {
+          type: "string",
+          default: "INBOX",
+          description: "Folder the email lives in (the same folder used in emails_find). The original is flagged \\Answered (reply) or $Forwarded (forward) afterwards."
+        },
         response_type: {
           type: "string",
           enum: ["reply", "reply_all", "forward"],

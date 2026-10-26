@@ -166,6 +166,8 @@ test('email_respond replies with threading headers and forwards', { skip }, asyn
   const [received] = await env.messages('bob');
   assert.equal(received.subject, 'Re: Question');
   assert.ok(received.parsed.inReplyTo);
+  assert.equal(reply.original_flagged, true);
+  assert.ok((await env.messages('alice'))[0].flags.has('\\Answered'));
 
   const forward = await call('email_respond', {
     email_id: String(uid),
@@ -251,4 +253,32 @@ test('accounts_list reports the safety switches', { skip }, async () => {
   assert.equal(byName.bob.read_only, true);
   assert.equal(byName.alice_safe.allow_permanent_delete, false);
   assert.equal(byName.alice_nodelete.allow_delete, false);
+});
+
+test('email_respond works from any folder and flags the original', { skip }, async () => {
+  const uid = await env.seed('alice', { folder: 'Trash', subject: 'Filed away', from: 'bob@example.test' });
+
+  const reply = await call('email_respond', { folder: 'Trash', email_id: String(uid), body: 'Thanks', body_type: 'plain' });
+  assert.equal(reply.success, true);
+  assert.equal(reply.original_flagged, true);
+  assert.deepEqual((await env.messages('bob')).map((m) => m.subject), ['Re: Filed away']);
+  let [original] = await env.messages('alice', 'Trash');
+  assert.ok(original.flags.has('\\Answered'));
+  assert.ok(!original.flags.has('$Forwarded'));
+
+  const forward = await call('email_respond', {
+    folder: 'Trash',
+    email_id: String(uid),
+    body: 'FYI',
+    response_type: 'forward',
+    to: ['bob@example.test'],
+    body_type: 'plain'
+  });
+  assert.equal(forward.success, true);
+  assert.equal(forward.original_flagged, true);
+  [original] = await env.messages('alice', 'Trash');
+  assert.ok(original.flags.has('\\Answered') && original.flags.has('$Forwarded'));
+
+  const wrongFolder = await call('email_respond', { email_id: String(uid), body: 'x' });
+  assert.equal(wrongFolder.success, false);
 });

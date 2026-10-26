@@ -464,7 +464,8 @@ async function listFoldersInternal(
 export async function getEmailById(
   account: EmailAccount,
   emailId: string,
-  includeAttachments: boolean = false
+  includeAttachments: boolean = false,
+  folder: string = 'INBOX'
 ): Promise<EmailMessage | null> {
   if (!/^\d+$/.test(emailId) || Number(emailId) < 1) {
     throw new Error(`Invalid email ID: ${emailId}`);
@@ -472,7 +473,7 @@ export async function getEmailById(
 
   const client = await createImapConnection(account);
   try {
-    return await fetchEmailByIdFromClient(client, emailId, includeAttachments);
+    return await fetchEmailByIdFromClient(client, emailId, includeAttachments, folder);
   } finally {
     await client.logout();
   }
@@ -481,9 +482,10 @@ export async function getEmailById(
 export async function fetchEmailByIdFromClient(
   client: Pick<ImapFlow, 'mailboxOpen' | 'fetchOne'>,
   emailId: string,
-  includeAttachments: boolean = false
+  includeAttachments: boolean = false,
+  folder: string = 'INBOX'
 ): Promise<EmailMessage | null> {
-  await client.mailboxOpen('INBOX', { readOnly: true });
+  await client.mailboxOpen(folder, { readOnly: true });
   const message = await client.fetchOne(emailId, {
     uid: true,
     flags: true,
@@ -493,6 +495,29 @@ export async function fetchEmailByIdFromClient(
   }, { uid: true });
 
   return message ? mapMessage(message, true, includeAttachments) : null;
+}
+
+/**
+ * Set a flag such as \\Answered or $Forwarded on a message. Returns false instead of
+ * throwing: the reply or forward has already been sent when this runs.
+ */
+export async function flagMessage(
+  account: EmailAccount,
+  folder: string,
+  emailId: string,
+  flag: string
+): Promise<boolean> {
+  try {
+    const client = await createImapConnection(account);
+    try {
+      await client.mailboxOpen(folder);
+      return Boolean(await withTimeout(client.messageFlagsAdd(emailId, [flag], { uid: true }), 15000, 'Flagging timed out'));
+    } finally {
+      await client.logout().catch(() => {});
+    }
+  } catch {
+    return false;
+  }
 }
 
 function structureHasAttachment(node: any): boolean {

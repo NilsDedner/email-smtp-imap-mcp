@@ -276,6 +276,7 @@ export async function handleEmailRespond(args: any): Promise<string> {
 
     assertWritable(config, 'email_respond');
     const emailId = requireString(args.email_id, 'email_id');
+    const folder = validateOptionalString(args.folder, 'folder');
     const body = requireString(args.body, 'body');
     const to = validateOptionalStringArray(args.to, 'to');
     const additionalAttachments = validateAttachments(args.additional_attachments, 'additional_attachments');
@@ -298,7 +299,8 @@ export async function handleEmailRespond(args: any): Promise<string> {
         bodyType: validateBodyType(args.body_type),
         includeOriginal: args.include_original !== false,
         includeAttachments: args.include_attachments !== false,
-        additionalAttachments
+        additionalAttachments,
+        folder
       });
 
     } else {
@@ -309,7 +311,8 @@ export async function handleEmailRespond(args: any): Promise<string> {
         replyAll: responseType === 'reply_all',
         includeOriginal: args.include_original !== false,
         includeAttachments: args.include_attachments !== false,
-        additionalAttachments
+        additionalAttachments,
+        folder
       });
     }
 
@@ -319,7 +322,8 @@ export async function handleEmailRespond(args: any): Promise<string> {
       message_id: result.messageId,
       ...(result.sent_copy ? { sent_copy: result.sent_copy } : {}),
       response_type: responseType,
-      original_email_id: emailId
+      original_email_id: emailId,
+      original_flagged: result.original_flagged ?? false
     }, null, 2);
 
   } catch (error: any) {

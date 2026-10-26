@@ -6,7 +6,7 @@ import nodemailer from 'nodemailer';
 import MailComposer from 'nodemailer/lib/mail-composer/index.js';
 import { randomUUID } from 'node:crypto';
 import { EmailAccount, EmailAttachment, EmailMessage } from './types.js';
-import { appendDraft, appendToSentFolder, getEmailById } from './imapService.js';
+import { appendDraft, appendToSentFolder, flagMessage, getEmailById } from './imapService.js';
 
 export interface SentCopyResult {
   saved: boolean;
@@ -18,6 +18,7 @@ export interface SendResult {
   messageId: string;
   success: boolean;
   sent_copy?: SentCopyResult;
+  original_flagged?: boolean;
 }
 
 /**
@@ -240,10 +241,12 @@ export async function replyToEmail(
     includeOriginal?: boolean;
     includeAttachments?: boolean;
     additionalAttachments?: EmailAttachment[];
+    folder?: string;
   }
 ): Promise<SendResult> {
+  const folder = options.folder || 'INBOX';
   // Get the original email
-  const originalEmail = await getEmailById(account, emailId, options.includeAttachments);
+  const originalEmail = await getEmailById(account, emailId, options.includeAttachments, folder);
 
   if (!originalEmail) {
     throw new Error(`Email with ID ${emailId} not found`);
@@ -269,7 +272,7 @@ export async function replyToEmail(
   }
 
   // Send the reply
-  return sendEmail(account, {
+  const result = await sendEmail(account, {
     to,
     subject: originalEmail.subject.startsWith('Re:')
       ? originalEmail.subject
@@ -281,6 +284,8 @@ export async function replyToEmail(
     inReplyTo: originalEmail.message_id,
     references: originalEmail.message_id ? [originalEmail.message_id] : undefined
   });
+  if (result.success) result.original_flagged = await flagMessage(account, folder, emailId, '\\Answered');
+  return result;
 }
 
 /**
@@ -296,10 +301,12 @@ export async function forwardEmail(
     includeOriginal?: boolean;
     includeAttachments?: boolean;
     additionalAttachments?: EmailAttachment[];
+    folder?: string;
   }
 ): Promise<SendResult> {
+  const folder = options.folder || 'INBOX';
   // Get the original email
-  const originalEmail = await getEmailById(account, emailId, options.includeAttachments);
+  const originalEmail = await getEmailById(account, emailId, options.includeAttachments, folder);
 
   if (!originalEmail) {
     throw new Error(`Email with ID ${emailId} not found`);
@@ -323,7 +330,7 @@ export async function forwardEmail(
   }
 
   // Send the forward
-  return sendEmail(account, {
+  const result = await sendEmail(account, {
     to: options.to,
     subject: originalEmail.subject.startsWith('Fwd:')
       ? originalEmail.subject
@@ -333,4 +340,6 @@ export async function forwardEmail(
     attachments,
     fromName: account.default_from_name
   });
+  if (result.success) result.original_flagged = await flagMessage(account, folder, emailId, '$Forwarded');
+  return result;
 }

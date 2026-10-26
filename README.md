@@ -148,7 +148,7 @@ Per account (environment variable, or the lowercase key in `EMAIL_ACCOUNTS_JSON`
 | `accounts_list` | List every configured account and identify the default without exposing credentials. |
 | `emails_find` | Search by text, sender, recipient, subject, date, read state, flag state, or attachments in INBOX or any other `folder`. Optionally return bodies and attachments. |
 | `email_send` | Send plain-text or HTML email with CC, BCC, sender aliases, and base64 attachments. |
-| `email_respond` | Reply, reply-all, or forward by email UID with threading and optional original attachments. |
+| `email_respond` | Reply, reply-all, or forward by email UID (from INBOX or any `folder`) with threading and optional original attachments. The original is flagged `\Answered` or `$Forwarded`. |
 | `emails_modify` | Mark read/unread, flag/unflag, move messages to another folder, or delete them (to Trash by default; `permanent: true` removes for good and needs `ALLOW_PERMANENT_DELETE`). Works on any source `folder`. |
 | `draft_create` | Save a plain-text or HTML draft with optional recipients and attachments to the Drafts folder without sending it. |
 | `folder_create` | Create a folder or subfolder such as `Projects/2026`. |
