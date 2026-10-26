@@ -173,7 +173,7 @@ test('drafts: create, update, send, delivery to the second account', { skip }, a
   assert.ok(delivered);
   const withBody = await ok('emails_find', { account_name: RX, filters: { subject }, include_content: true });
   assert.match(withBody.emails[0].body, /second/);
-  assert.equal((await find('a', 'Drafts', subject)).length, 0);
+  assert.equal((await findExact('a', draft.folder, subject)).length, 0, 'sent draft must be gone');
   assert.equal((await findExact('a', sent.sent_copy.folder, subject)).length, 1);
 });
 
