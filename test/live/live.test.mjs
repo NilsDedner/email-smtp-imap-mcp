@@ -9,10 +9,14 @@
  * Provider quirks that are not failures of this server are recorded as findings.
  */
 import assert from 'node:assert/strict';
+import { readFile, rm } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import test, { after, before } from 'node:test';
 
 import dotenv from 'dotenv';
+import { ImapFlow } from 'imapflow';
+import { simpleParser } from 'mailparser';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
@@ -317,4 +321,227 @@ test('read-only protection holds on the live account', { skip }, async () => {
   } finally {
     await readOnly.close();
   }
+});
+
+// ---------------------------------------------------------------------------------------------
+// Further coverage. These tests build on the test folder created by the first test.
+
+async function sep() {
+  return (await ok('folders_list')).folders.find((f) => f.path === 'INBOX').delimiter;
+}
+
+/** Fetch and parse the raw message directly over IMAP, for headers the tools do not expose */
+async function rawMessage(folder, subject, mailbox = 'a') {
+  const user = mailbox === 'b' ? e.LIVE_B_USER : e.LIVE_A_USER;
+  const pass = mailbox === 'b' ? e.LIVE_B_PASS : e.LIVE_A_PASS;
+  const imap = new ImapFlow({
+    host: e.LIVE_IMAP_HOST,
+    port: Number(e.LIVE_IMAP_PORT || 993),
+    secure: e.LIVE_IMAP_SECURE !== 'false',
+    auth: { user, pass },
+    logger: false
+  });
+  imap.on('error', () => {});
+  await imap.connect();
+  try {
+    const lock = await imap.getMailboxLock(folder);
+    try {
+      const uids = await imap.search({ subject }, { uid: true });
+      if (!uids || uids.length === 0) return undefined;
+      const message = await imap.fetchOne(Math.max(...uids), { source: true }, { uid: true });
+      return simpleParser(message.source);
+    } finally {
+      lock.release();
+    }
+  } finally {
+    await imap.logout().catch(() => {});
+  }
+}
+
+const draftIn = async (name, extra = {}) =>
+  ok('draft_create', { subject: `${RUN} ${name}`, body: `body of ${name}`, body_type: 'plain', folder: FOLDER, ...extra });
+
+test('send options arrive as headers in the delivered mail and the sent copy', { skip }, async () => {
+  const subject = `${RUN} options`;
+  await ok('email_send', {
+    to: [RECIPIENT],
+    subject,
+    body: 'with options',
+    body_type: 'plain',
+    reply_to: 'desk@example.invalid',
+    priority: 'high',
+    read_receipt: true,
+    headers: { 'X-Ticket': '4711' }
+  });
+  await waitFor('delivery of the options mail', async () => (await findExact(RX, 'INBOX', subject))[0]);
+  assert.equal((await findExact(RX, 'INBOX', subject))[0].reply_to?.includes('desk@example.invalid'), true, 'reply_to in search result');
+
+  const sentFolder = (await ok('folders_list')).folders.find((f) => f.special_use === '\\Sent').path;
+  const places = [['delivered mail', await rawMessage('INBOX', subject, RX)], ['sent copy', await rawMessage(sentFolder, subject)]];
+  for (const [name, mail] of places) {
+    assert.ok(mail, `${name} not found`);
+    assert.equal(mail.replyTo?.value[0].address, 'desk@example.invalid', `${name}: Reply-To`);
+    assert.equal(mail.headers.get('priority'), 'high', `${name}: priority`);
+    assert.ok(mail.headers.has('disposition-notification-to'), `${name}: read receipt`);
+    assert.equal(mail.headers.get('x-ticket'), '4711', `${name}: custom header`);
+  }
+});
+
+test('drafts keep send options across an update on the real server', { skip }, async () => {
+  const draft = await draftIn('draft options', { priority: 'low', reply_to: 'desk@example.invalid', headers: { 'X-Team': 'ops' } });
+  const updated = await ok('draft_update', { folder: FOLDER, email_id: draft.email_id, body: 'changed body' });
+  const mail = await rawMessage(FOLDER, `${RUN} draft options`);
+  assert.ok(mail, 'draft not found');
+  assert.equal(mail.headers.get('priority'), 'low');
+  assert.equal(mail.replyTo?.value[0].address, 'desk@example.invalid');
+  assert.equal(mail.headers.get('x-team'), 'ops');
+  assert.match(mail.text, /changed body/);
+  assert.notEqual(updated.email_id, draft.email_id);
+  assert.equal((await findExact('a', FOLDER, `${RUN} draft options`)).length, 1, 'old draft copy must be gone');
+});
+
+test('custom keywords: add, search, bulk remove', { skip }, async () => {
+  await draftIn('kw 1');
+  await draftIn('kw 2');
+  await draftIn('kw 3');
+  const ids = (await find('a', FOLDER, `${RUN} kw`)).map((m) => m.id);
+  assert.equal(ids.length, 3);
+
+  await ok('emails_modify', { folder: FOLDER, email_ids: ids, add_keywords: ['MCPLive', 'MCPFollowup'] });
+  await ok('emails_modify', { folder: FOLDER, email_ids: [ids[0]], add_keywords: ['MCPDone'] });
+  const listed = await ok('emails_find', { folder: FOLDER, filters: { subject: `${RUN} kw` } });
+  const stored = listed.emails.every((m) => m.keywords?.includes('MCPLive'));
+  soft('custom keywords are stored by the server', stored, stored ? '' : 'server ignores arbitrary flags; keyword features are limited');
+  if (!stored) return;
+
+  const open = await ok('emails_find', { folder: FOLDER, filters: { subject: RUN, keyword: 'MCPLive', no_keyword: 'MCPDone' } });
+  assert.equal(open.total_found, 2);
+
+  const selection = { folder: FOLDER, filters: { keyword: 'MCPFollowup', subject: RUN } };
+  const dry = await ok('emails_modify', { ...selection, dry_run: true });
+  assert.equal(dry.matched, 3);
+  await ok('emails_modify', { ...selection, remove_keywords: ['MCPFollowup'], expected_count: 3 });
+  assert.equal((await ok('emails_find', { folder: FOLDER, filters: { subject: RUN, keyword: 'MCPFollowup' } })).total_found, 0);
+  assert.equal((await ok('emails_find', { folder: FOLDER, filters: { subject: RUN, keyword: 'MCPLive' } })).total_found, 3);
+});
+
+test('search filters and paging: attachments, size, cc, draft state', { skip }, async () => {
+  const file = (size) => ({ filename: 'f.txt', content: Buffer.alloc(size, 'a').toString('base64'), content_type: 'text/plain' });
+  await draftIn('flt big', { attachments: [file(30000)] });
+  await draftIn('flt mid', { attachments: [file(3000)], cc: ['watcher@example.invalid'] });
+  await draftIn('flt small');
+  await draftIn('flt tiny');
+  const base = { folder: FOLDER };
+  const subjects = async (filters, extra = {}) =>
+    (await ok('emails_find', { ...base, ...extra, filters: { subject: `${RUN} flt`, ...filters } })).emails.map((m) => m.subject.replace(`${RUN} flt `, '')).sort();
+
+  assert.deepEqual(await subjects({ has_attachments: true }), ['big', 'mid']);
+  assert.deepEqual(await subjects({ has_attachments: false }), ['small', 'tiny']);
+  assert.deepEqual(await subjects({ min_size: 20000 }), ['big']);
+  assert.deepEqual(await subjects({ max_size: 2000 }), ['small', 'tiny']);
+  assert.deepEqual(await subjects({ cc: 'watcher@example.invalid' }), ['mid']);
+  assert.deepEqual(await subjects({ is_draft: true }), ['big', 'mid', 'small', 'tiny']);
+  assert.deepEqual(await subjects({ is_draft: false }), []);
+
+  const page1 = await ok('emails_find', { ...base, limit: 2, filters: { subject: `${RUN} flt`, has_attachments: true } });
+  const page2 = await ok('emails_find', { ...base, limit: 2, offset: 2, filters: { subject: `${RUN} flt`, has_attachments: true } });
+  assert.deepEqual([page1.total_found, page1.count, page1.has_more, page2.count, page2.has_more], [2, 2, false, 0, false]);
+  const oldest = await ok('emails_find', { ...base, limit: 1, order: 'oldest', filters: { subject: `${RUN} flt` } });
+  assert.match(oldest.emails[0].subject, /flt big$/);
+});
+
+test('draft_delete: Trash first, permanent only on request', { skip }, async () => {
+  const soft1 = await ok('draft_create', { subject: `${RUN} del soft`, body: 'x', body_type: 'plain' });
+  const hard = await ok('draft_create', { subject: `${RUN} del hard`, body: 'x', body_type: 'plain' });
+  const trash = (await ok('folders_list')).folders.find((f) => f.special_use === '\\Trash').path;
+
+  const moved = await ok('draft_delete', { email_ids: [soft1.email_id] });
+  assert.equal(moved.deleted_to, trash);
+  assert.equal((await findExact('a', soft1.folder, `${RUN} del soft`)).length, 0);
+  assert.equal((await findExact('a', trash, `${RUN} del soft`)).length, 1);
+
+  await ok('draft_delete', { email_ids: [hard.email_id], permanent: true });
+  assert.equal((await findExact('a', hard.folder, `${RUN} del hard`)).length, 0);
+  assert.equal((await findExact('a', trash, `${RUN} del hard`)).length, 0, 'permanent delete must not reach Trash');
+});
+
+test('folders with umlauts and spaces: create, use, rename, move mail, delete', { skip }, async () => {
+  const s = await sep();
+  const first = `${FOLDER}${s}Übersicht Ärger & Co`;
+  const second = `${FOLDER}${s}Überblick`;
+  assert.equal((await ok('folder_create', { name: first })).folder, first);
+  const draft = await draftIn('umlaut', { folder: first });
+  assert.equal(draft.folder, first);
+  assert.equal((await findExact('a', first, `${RUN} umlaut`)).length, 1);
+
+  await ok('folder_rename', { name: first, new_name: second });
+  assert.equal((await findExact('a', second, `${RUN} umlaut`)).length, 1, 'messages move with the folder');
+  const listed = (await ok('folders_list')).folders.map((f) => f.path);
+  assert.ok(listed.includes(second) && !listed.includes(first));
+
+  const [mail] = await findExact('a', second, `${RUN} umlaut`);
+  await ok('emails_modify', { folder: second, email_ids: [mail.id], move_to_folder: FOLDER });
+  assert.equal((await findExact('a', FOLDER, `${RUN} umlaut`)).length, 1);
+  await ok('folder_delete', { name: second });
+  assert.ok(!(await ok('folders_list')).folders.some((f) => f.path === second));
+});
+
+test('guards: only Trash and Junk can be emptied; unknown folders are refused', { skip }, async () => {
+  // Deliberately harmless on a real mailbox: nothing here targets INBOX, Sent, Drafts, Trash or Junk, so a
+  // broken guard could at worst touch the test folder. Protection of those folders is covered by the Docker tests.
+  for (const name of [FOLDER, `${RUN}-missing`]) {
+    assert.equal((await call('folder_empty', { name })).success, false, `folder_empty must refuse ${name}`);
+  }
+  assert.equal((await call('folder_delete', { name: `${RUN}-missing` })).success, false);
+  assert.equal((await call('folder_rename', { name: `${RUN}-missing`, new_name: `${RUN}-other` })).success, false);
+  assert.equal((await call('folder_empty', { name: FOLDER, older_than_days: -1 })).success, false);
+  soft('folder_empty and protected-folder guards not exercised on the real mailbox', true, 'on purpose: a failing guard would hit real data');
+});
+
+test('emails_wait on the real server: quiet timeout and resuming from a UID', { skip }, async () => {
+  await draftIn('wait seed');
+  const [seed] = await findExact('a', FOLDER, `${RUN} wait seed`);
+
+  const started = Date.now();
+  const quiet = await ok('emails_wait', { folder: FOLDER, timeout_seconds: 2 });
+  assert.equal(quiet.timed_out, true);
+  assert.ok(Date.now() - started >= 1800);
+
+  const resumed = await ok('emails_wait', { folder: FOLDER, timeout_seconds: 5, since_uid: Number(seed.id) });
+  assert.equal(resumed.timed_out, false);
+  assert.ok(resumed.emails.some((m) => m.subject === `${RUN} wait seed`));
+  const after = await ok('emails_wait', { folder: FOLDER, timeout_seconds: 1, since_uid: resumed.next_uid });
+  assert.equal(after.timed_out, true);
+});
+
+test('connections are reused instead of logging in for every call', { skip }, async () => {
+  const logFile = path.join(os.tmpdir(), `imap-live-pool-${process.pid}.log`);
+  await rm(logFile, { force: true });
+  const local = new Client({ name: 'live-pool', version: '1.0.0' });
+  await local.connect(new StdioClientTransport({
+    command: process.execPath,
+    args: [path.resolve('build/index.js')],
+    env: {
+      PATH: process.env.PATH || '',
+      IMAP_DEBUG_LOG: logFile,
+      EMAIL_ACCOUNTS_JSON: JSON.stringify({
+        a: {
+          smtp: { host: e.LIVE_SMTP_HOST, port: Number(e.LIVE_SMTP_PORT || 587), user: e.LIVE_A_USER, password: e.LIVE_A_PASS },
+          imap: { host: e.LIVE_IMAP_HOST, port: Number(e.LIVE_IMAP_PORT || 993), secure: e.LIVE_IMAP_SECURE !== 'false', user: e.LIVE_A_USER, password: e.LIVE_A_PASS }
+        }
+      })
+    }
+  }));
+  try {
+    for (let i = 0; i < 6; i++) {
+      const result = JSON.parse((await local.callTool({ name: i % 2 ? 'folders_list' : 'emails_find', arguments: { folder: FOLDER } })).content[0].text);
+      assert.equal(result.success, true, result.error);
+    }
+  } finally {
+    await local.close();
+  }
+  const lines = (await readFile(logFile, 'utf8').catch(() => '')).split('\n').filter(Boolean);
+  const connections = new Set(lines.map((line) => JSON.parse(line.slice(line.indexOf('{'))).cid).filter(Boolean)).size;
+  await rm(logFile, { force: true });
+  assert.equal(connections, 1, `six calls should share one connection (saw ${connections})`);
 });
