@@ -134,10 +134,13 @@ The folder is the one flagged `\Sent` by the server, falling back to `Sent`. Set
 | Tool | What it does |
 | --- | --- |
 | `accounts_list` | List every configured account and identify the default without exposing credentials. |
-| `emails_find` | Search by text, sender, recipient, subject, date, read state, flag state, or attachments. Optionally return bodies and attachments. |
+| `emails_find` | Search by text, sender, recipient, subject, date, read state, flag state, or attachments in INBOX or any other `folder`. Optionally return bodies and attachments. |
 | `email_send` | Send plain-text or HTML email with CC, BCC, sender aliases, and base64 attachments. |
 | `email_respond` | Reply, reply-all, or forward by email UID with threading and optional original attachments. |
-| `emails_modify` | Mark read/unread, flag/unflag, or move messages to another folder. |
+| `emails_modify` | Mark read/unread, flag/unflag, move messages to another folder, or delete them (to Trash by default, `permanent: true` to remove for good). Works on any source `folder`. |
+| `draft_create` | Save a plain-text or HTML draft with optional recipients and attachments to the Drafts folder without sending it. |
+| `folder_create` | Create a folder or subfolder such as `Projects/2026`. |
+| `folder_delete` | Delete a folder and its messages. INBOX and special folders (Sent, Drafts, Trash, ...) are protected. |
 | `folders_list` | List folders with optional total and unread counts. |
 
 Every email tool accepts an optional `account_name`. Without it, the server uses `DEFAULT_EMAIL_ACCOUNT` or the first configured account. There is no application-level account-count limit.

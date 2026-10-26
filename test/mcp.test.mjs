@@ -143,7 +143,7 @@ test('serves all tools over stdio and marks failed calls as errors', async () =>
     const listed = await client.listTools();
     assert.deepEqual(
       listed.tools.map((tool) => tool.name).sort(),
-      ['accounts_list', 'email_respond', 'email_send', 'emails_find', 'emails_modify', 'folders_list']
+      ['accounts_list', 'draft_create', 'email_respond', 'email_send', 'emails_find', 'emails_modify', 'folder_create', 'folder_delete', 'folders_list']
     );
 
     const result = await client.callTool({

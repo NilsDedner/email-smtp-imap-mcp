@@ -121,11 +121,12 @@ export async function searchEmails(
   limit: number = 20,
   includeContent: boolean = false,
   includeAttachments: boolean = false,
-  query?: string
+  query?: string,
+  folder: string = 'INBOX'
 ): Promise<EmailMessage[]> {
   // Wrap entire operation with 90-second timeout (generous for large mailboxes)
   return withTimeout(
-    searchEmailsInternal(account, filters, limit, includeContent, includeAttachments, query),
+    searchEmailsInternal(account, filters, limit, includeContent, includeAttachments, query, folder),
     90000,
     'Email search operation timed out after 90 seconds - try reducing limit or adding filters'
   );
@@ -140,14 +141,15 @@ async function searchEmailsInternal(
   limit: number = 20,
   includeContent: boolean = false,
   includeAttachments: boolean = false,
-  query?: string
+  query?: string,
+  folder: string = 'INBOX'
 ): Promise<EmailMessage[]> {
   const client = await createImapConnection(account);
 
   try {
-    // Open inbox with timeout
+    // Open mailbox with timeout
     const mailbox = await withTimeout(
-      client.mailboxOpen('INBOX'),
+      client.mailboxOpen(folder),
       10000,
       'Mailbox open timed out'
     );
@@ -224,12 +226,20 @@ export async function modifyEmails(
     flag?: boolean;
     unflag?: boolean;
     moveToFolder?: string;
+    delete?: boolean;
+    permanent?: boolean;
+    folder?: string;
   }
-): Promise<{ success: boolean; modified: number; errors?: string[] }> {
+): Promise<{ success: boolean; modified: number; errors?: string[]; deleted_to?: string }> {
   const client = await createImapConnection(account);
 
   try {
-    await client.mailboxOpen('INBOX');
+    await client.mailboxOpen(options.folder || 'INBOX');
+
+    let trashFolder: string | undefined;
+    if (options.delete && !options.permanent) {
+      trashFolder = resolveSpecialFolder(await client.list(), '\\Trash', 'Trash');
+    }
 
     const errors: string[] = [];
     let modified = 0;
@@ -260,6 +270,12 @@ export async function modifyEmails(
         // Move to folder
         if (options.moveToFolder) {
           await client.messageMove(uid, options.moveToFolder, { uid: true });
+        } else if (options.delete) {
+          if (options.permanent) {
+            await client.messageDelete(uid, { uid: true });
+          } else {
+            await client.messageMove(uid, trashFolder!, { uid: true });
+          }
         }
 
         modified++;
@@ -271,11 +287,72 @@ export async function modifyEmails(
     return {
       success: errors.length === 0,
       modified,
-      errors: errors.length > 0 ? errors : undefined
+      errors: errors.length > 0 ? errors : undefined,
+      ...(trashFolder ? { deleted_to: trashFolder } : {})
     };
 
   } finally {
     await client.logout();
+  }
+}
+
+/**
+ * Pick a folder by its RFC 6154 special-use flag, else a fallback name.
+ */
+export function resolveSpecialFolder(
+  folders: Array<{ path: string; specialUse?: string }>,
+  specialUse: string,
+  fallback: string
+): string {
+  return folders.find((folder) => folder.specialUse === specialUse)?.path || fallback;
+}
+
+/**
+ * Create a folder (nested paths like "Projects/2026" use the server's delimiter)
+ */
+export async function createFolder(account: EmailAccount, path: string): Promise<string> {
+  const client = await createImapConnection(account);
+  try {
+    const result = await withTimeout(client.mailboxCreate(path), 30000, 'Creating folder timed out');
+    return result.path;
+  } finally {
+    await client.logout().catch(() => {});
+  }
+}
+
+/**
+ * Delete a folder. INBOX and special-use folders (Sent, Drafts, Trash, ...) are protected.
+ */
+export async function deleteFolder(account: EmailAccount, path: string): Promise<string> {
+  if (path.toUpperCase() === 'INBOX') throw new Error('INBOX cannot be deleted');
+  const client = await createImapConnection(account);
+  try {
+    const match = (await client.list()).find((folder) => folder.path === path);
+    if (!match) throw new Error(`Folder not found: ${path}`);
+    if (match.specialUse) throw new Error(`Folder ${path} is a special-use folder (${match.specialUse}) and cannot be deleted`);
+    const result = await withTimeout(client.mailboxDelete(path), 30000, 'Deleting folder timed out');
+    return result.path;
+  } finally {
+    await client.logout().catch(() => {});
+  }
+}
+
+/**
+ * Store a raw RFC 822 message as a draft (flagged \\Draft, marked read).
+ * Returns the folder path and, when the server reports it, the new UID.
+ */
+export async function appendDraft(
+  account: EmailAccount,
+  raw: Buffer,
+  folder?: string
+): Promise<{ folder: string; uid?: number }> {
+  const client = await createImapConnection(account);
+  try {
+    const target = folder || resolveSpecialFolder(await client.list(), '\\Drafts', 'Drafts');
+    const result = await withTimeout(client.append(target, raw, ['\\Draft', '\\Seen']), 30000, 'Saving draft timed out');
+    return { folder: target, uid: result ? result.uid : undefined };
+  } finally {
+    await client.logout().catch(() => {});
   }
 }
 

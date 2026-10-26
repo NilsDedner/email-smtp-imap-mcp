@@ -3,8 +3,8 @@
  */
 
 import { getAccount, loadAccounts } from './accountManager.js';
-import { searchEmails, modifyEmails, listFolders } from './imapService.js';
-import { sendEmail, replyToEmail, forwardEmail } from './smtpService.js';
+import { searchEmails, modifyEmails, listFolders, createFolder, deleteFolder } from './imapService.js';
+import { sendEmail, replyToEmail, forwardEmail, createDraft } from './smtpService.js';
 import { EmailFilters } from './types.js';
 
 function requireString(value: unknown, fieldName: string): string {
@@ -118,7 +118,8 @@ export async function handleEmailsFind(args: any): Promise<string> {
       limit,
       includeContent,
       includeAttachments,
-      args.query
+      args.query,
+      validateOptionalString(args.folder, 'folder')
     );
 
     return JSON.stringify({
@@ -153,7 +154,12 @@ export async function handleEmailsModify(args: any): Promise<string> {
       validateOptionalBoolean(args[booleanField], booleanField);
     }
     validateOptionalString(args.move_to_folder, 'move_to_folder');
-    if (!args.mark_read && !args.mark_unread && !args.flag && !args.unflag && !args.move_to_folder) {
+    const folder = validateOptionalString(args.folder, 'folder');
+    validateOptionalBoolean(args.delete, 'delete');
+    validateOptionalBoolean(args.permanent, 'permanent');
+    if (args.permanent && !args.delete) throw new Error('permanent requires delete to be true');
+    if (args.delete && args.move_to_folder) throw new Error('delete and move_to_folder cannot be combined');
+    if (!args.mark_read && !args.mark_unread && !args.flag && !args.unflag && !args.move_to_folder && !args.delete) {
       throw new Error('At least one modification is required');
     }
     if (args.mark_read && args.mark_unread) {
@@ -168,7 +174,10 @@ export async function handleEmailsModify(args: any): Promise<string> {
       markUnread: args.mark_unread,
       flag: args.flag,
       unflag: args.unflag,
-      moveToFolder: args.move_to_folder
+      moveToFolder: args.move_to_folder,
+      delete: args.delete,
+      permanent: args.permanent,
+      folder
     });
 
     return JSON.stringify({
@@ -176,6 +185,7 @@ export async function handleEmailsModify(args: any): Promise<string> {
       account: name,
       modified: result.modified,
       total: emailIds.length,
+      ...(result.deleted_to ? { deleted_to: result.deleted_to } : {}),
       errors: result.errors
     }, null, 2);
 
@@ -323,6 +333,84 @@ export async function handleFoldersList(args: any): Promise<string> {
     return JSON.stringify({
       success: false,
       error: error.message || 'Failed to list folders'
+    }, null, 2);
+  }
+}
+
+/**
+ * Handle draft_create tool
+ */
+export async function handleDraftCreate(args: any): Promise<string> {
+  try {
+    args = args || {};
+    const { name, config } = getAccount(args.account_name);
+
+    const subject = requireString(args.subject, 'subject');
+    const body = requireString(args.body, 'body');
+    const to = validateOptionalStringArray(args.to, 'to');
+    const cc = validateOptionalStringArray(args.cc, 'cc');
+    const bcc = validateOptionalStringArray(args.bcc, 'bcc');
+    const attachments = validateAttachments(args.attachments, 'attachments');
+
+    const result = await createDraft(config, {
+      to,
+      subject,
+      body,
+      bodyType: validateBodyType(args.body_type),
+      cc,
+      bcc,
+      attachments,
+      fromName: config.default_from_name,
+      fromEmail: validateOptionalString(args.from_email, 'from_email'),
+      folder: validateOptionalString(args.folder, 'folder')
+    });
+
+    return JSON.stringify({
+      success: true,
+      account: name,
+      folder: result.folder,
+      ...(result.uid !== undefined ? { email_id: String(result.uid) } : {}),
+      subject
+    }, null, 2);
+
+  } catch (error: any) {
+    return JSON.stringify({
+      success: false,
+      error: error.message || 'Failed to create draft'
+    }, null, 2);
+  }
+}
+
+/**
+ * Handle folder_create tool
+ */
+export async function handleFolderCreate(args: any): Promise<string> {
+  try {
+    args = args || {};
+    const { name: accountName, config } = getAccount(args.account_name);
+    const path = await createFolder(config, requireString(args.name, 'name'));
+    return JSON.stringify({ success: true, account: accountName, folder: path }, null, 2);
+  } catch (error: any) {
+    return JSON.stringify({
+      success: false,
+      error: error.message || 'Failed to create folder'
+    }, null, 2);
+  }
+}
+
+/**
+ * Handle folder_delete tool
+ */
+export async function handleFolderDelete(args: any): Promise<string> {
+  try {
+    args = args || {};
+    const { name: accountName, config } = getAccount(args.account_name);
+    const path = await deleteFolder(config, requireString(args.name, 'name'));
+    return JSON.stringify({ success: true, account: accountName, deleted: path }, null, 2);
+  } catch (error: any) {
+    return JSON.stringify({
+      success: false,
+      error: error.message || 'Failed to delete folder'
     }, null, 2);
   }
 }

@@ -18,7 +18,10 @@ import {
   handleEmailsModify,
   handleEmailSend,
   handleEmailRespond,
-  handleFoldersList
+  handleFoldersList,
+  handleDraftCreate,
+  handleFolderCreate,
+  handleFolderDelete
 } from "./emailHandlers.js";
 import { loadEnvironment } from './environment.js';
 import * as fs from 'fs';
@@ -105,6 +108,18 @@ async function runServer() {
 
           case "folders_list":
             result = await handleFoldersList(args);
+            break;
+
+          case "draft_create":
+            result = await handleDraftCreate(args);
+            break;
+
+          case "folder_create":
+            result = await handleFolderCreate(args);
+            break;
+
+          case "folder_delete":
+            result = await handleFolderDelete(args);
             break;
 
           default:

@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `draft_create` saves drafts to the IMAP Drafts folder without sending.
+- `folder_create` and `folder_delete` manage folders (INBOX and special-use folders are protected).
+- `emails_modify` can delete messages (to Trash, or permanently with `permanent: true`) and accepts a source `folder`.
+- `emails_find` accepts a `folder`, so messages outside INBOX can be found, moved, or deleted.
+
 ## [2.2.0] - 2026-08-11
 
 ### Added

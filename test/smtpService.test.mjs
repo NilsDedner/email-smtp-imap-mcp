@@ -77,3 +77,17 @@ test('resolves the sent folder from config, special-use flag, or fallback', () =
   assert.equal(resolveSentFolder(folders), 'Gesendete Objekte');
   assert.equal(resolveSentFolder([{ path: 'INBOX' }]), 'Sent');
 });
+
+test('new tools validate input before connecting', async () => {
+  const { handleDraftCreate, handleEmailsModify, handleFolderDelete } = await import('../build/emailHandlers.js');
+  process.env.EMAIL_ACCOUNTS_JSON = JSON.stringify({
+    t: {
+      smtp: { host: 'smtp.test', user: 't@example.com', password: 'x' },
+      imap: { host: 'imap.test', user: 't@example.com', password: 'x' }
+    }
+  });
+  assert.match(JSON.parse(await handleDraftCreate({ body: 'x' })).error, /subject is required/);
+  assert.match(JSON.parse(await handleEmailsModify({ email_ids: ['1'], permanent: true })).error, /permanent requires delete/);
+  assert.match(JSON.parse(await handleEmailsModify({ email_ids: ['1'], delete: true, move_to_folder: 'A' })).error, /cannot be combined/);
+  assert.match(JSON.parse(await handleFolderDelete({ name: 'INBOX' })).error, /INBOX cannot be deleted/);
+});

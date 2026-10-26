@@ -85,6 +85,11 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
           type: "boolean",
           default: false,
           description: "Include attachment content (base64 encoded)"
+        },
+        folder: {
+          type: "string",
+          default: "INBOX",
+          description: "Folder to search (e.g., 'Archive', 'Drafts', 'Trash'). Use folders_list for valid paths."
         }
       }
     }
@@ -95,7 +100,7 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
    */
   "emails_modify": {
     name: "emails_modify",
-    description: "Change email states like read/unread, flagged, or move between folders. Use this to organize your inbox, mark emails as read, archive messages, or flag important emails.",
+    description: "Change email states like read/unread, flagged, move between folders, or delete. Deleting moves messages to the Trash folder unless permanent is true, which cannot be undone.",
     inputSchema: {
       type: "object",
       properties: {
@@ -127,6 +132,19 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
         move_to_folder: {
           type: "string",
           description: "Move emails to a folder (e.g., 'Archive', 'Trash', 'INBOX')"
+        },
+        folder: {
+          type: "string",
+          default: "INBOX",
+          description: "Folder the email IDs belong to (IDs are per folder; use the same folder as in emails_find)"
+        },
+        delete: {
+          type: "boolean",
+          description: "Delete emails: move them to the Trash folder (recoverable)"
+        },
+        permanent: {
+          type: "boolean",
+          description: "With delete: remove emails permanently instead of moving them to Trash. Cannot be undone."
         }
       },
       required: ["email_ids"]
@@ -260,6 +278,85 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
         }
       },
       required: ["email_id", "body"]
+    }
+  },
+
+  /**
+   * Create a draft
+   */
+  "draft_create": {
+    name: "draft_create",
+    description: "Save an email as a draft in the Drafts folder without sending it. Recipients are optional so the draft can be finished in your mail client.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account_name: { type: "string", description: "Name of the email account to use" },
+        to: { type: "array", items: { type: "string" }, description: "Array of recipient email addresses" },
+        subject: { type: "string", description: "Email subject line" },
+        body: { type: "string", description: "Email body content (plain text or HTML)" },
+        body_type: {
+          type: "string",
+          enum: ["plain", "html"],
+          default: "html",
+          description: "Body format: 'plain' or 'html'"
+        },
+        from_email: {
+          type: "string",
+          description: "Optional sender address. When sender_emails is configured for the account, the address must be in that allowlist."
+        },
+        cc: { type: "array", items: { type: "string" }, description: "Array of CC recipient email addresses" },
+        bcc: { type: "array", items: { type: "string" }, description: "Array of BCC recipient email addresses" },
+        attachments: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              filename: { type: "string", description: "Name of the file" },
+              content: { type: "string", description: "Base64 encoded file content" },
+              content_type: { type: "string", description: "MIME type" }
+            },
+            required: ["filename", "content"]
+          },
+          description: "Array of file attachments"
+        },
+        folder: {
+          type: "string",
+          description: "Folder to store the draft in. Defaults to the folder flagged \\Drafts, else 'Drafts'."
+        }
+      },
+      required: ["subject", "body"]
+    }
+  },
+
+  /**
+   * Create a folder
+   */
+  "folder_create": {
+    name: "folder_create",
+    description: "Create a new email folder. Use a path like 'Projects/2026' to create a subfolder (the server's folder separator is applied).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account_name: { type: "string", description: "Name of the email account to use" },
+        name: { type: "string", description: "Folder name or path to create" }
+      },
+      required: ["name"]
+    }
+  },
+
+  /**
+   * Delete a folder
+   */
+  "folder_delete": {
+    name: "folder_delete",
+    description: "Delete an email folder and the messages in it. INBOX and special folders (Sent, Drafts, Trash, ...) are protected. Move messages elsewhere first if you want to keep them.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account_name: { type: "string", description: "Name of the email account to use" },
+        name: { type: "string", description: "Folder path to delete (from folders_list)" }
+      },
+      required: ["name"]
     }
   },
 
