@@ -95,6 +95,7 @@ before(async () => {
     args: [path.resolve('build/index.js')],
     env: {
       PATH: process.env.PATH || '',
+      ...(e.IMAP_DEBUG_LOG ? { IMAP_DEBUG_LOG: e.IMAP_DEBUG_LOG } : {}),
       DEFAULT_EMAIL_ACCOUNT: 'a',
       EMAIL_ACCOUNTS_JSON: JSON.stringify({
         a: account(e.LIVE_A_USER, e.LIVE_A_PASS),
@@ -286,6 +287,7 @@ test('read-only protection holds on the live account', { skip }, async () => {
     args: [path.resolve('build/index.js')],
     env: {
       PATH: process.env.PATH || '',
+      ...(e.IMAP_DEBUG_LOG ? { IMAP_DEBUG_LOG: e.IMAP_DEBUG_LOG } : {}),
       EMAIL_ACCOUNTS_JSON: JSON.stringify({
         ro: {
           smtp: { host: e.LIVE_SMTP_HOST, port: Number(e.LIVE_SMTP_PORT || 587), user: e.LIVE_A_USER, password: e.LIVE_A_PASS },

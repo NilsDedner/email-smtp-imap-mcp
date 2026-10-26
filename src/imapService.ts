@@ -2,9 +2,36 @@
  * IMAP email operations
  */
 
+import { appendFileSync } from 'node:fs';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { AttachmentInfo, EmailAccount, EmailFilters, EmailMessage, EmailFolder } from './types.js';
+
+/**
+ * Set IMAP_DEBUG_LOG=/path/to/file to record the IMAP conversation (passwords are masked by ImapFlow,
+ * but the log contains folder names, subjects and addresses). Nothing is logged by default.
+ */
+function imapLogger(): any {
+  const file = process.env.IMAP_DEBUG_LOG;
+  if (!file) return false;
+  const write = (level: string) => (entry: unknown) => {
+    try {
+      appendFileSync(file, `${new Date().toISOString()} ${level} ${JSON.stringify(entry)}\n`);
+    } catch {
+      // Logging must never break a mail operation
+    }
+  };
+  return { debug: write('debug'), info: write('info'), warn: write('warn'), error: write('error'), fatal: write('fatal'), trace: write('trace') };
+}
+
+/**
+ * Message of an IMAP error including what the server said ("Command failed" alone says little)
+ */
+export function describeError(error: any): string {
+  const message = error?.message || String(error);
+  const detail = [error?.serverResponseCode, error?.responseText].filter(Boolean).join(' ');
+  return detail && !message.includes(detail) ? `${message}: ${detail}` : message;
+}
 
 /**
  * Create IMAP connection with timeout and error handling
@@ -29,7 +56,7 @@ async function createImapConnection(account: EmailAccount): Promise<ImapFlow> {
       user: account.imap_user,
       pass: account.imap_pass
     },
-    logger: false, // Disable logging to avoid stdio issues
+    logger: imapLogger(), // Off by default: logging to stdout would corrupt the MCP stdio stream
     connectionTimeout: 15000, // 15 second connection timeout
     greetingTimeout: 10000, // 10 second greeting timeout
     socketTimeout: 60000 // 60 second socket timeout for operations
@@ -714,6 +741,19 @@ export function collectAttachments(node: any, out: AttachmentInfo[] = [], isRoot
   return out;
 }
 
+/**
+ * Match a BODYSTRUCTURE attachment to a parsed one: by filename when unique, else by position
+ */
+export function pickParsedAttachment(
+  parsed: Array<{ filename?: string; content: Buffer }>,
+  info: AttachmentInfo,
+  index: number
+): { filename?: string; content: Buffer } | undefined {
+  const sameName = parsed.filter((attachment) => attachment.filename === info.filename);
+  if (sameName.length === 1) return sameName[0];
+  return parsed[index];
+}
+
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 /**
@@ -748,15 +788,26 @@ export async function getAttachment(
       throw new Error(`Attachment is too large (${info.size} bytes encoded, limit ${MAX_ATTACHMENT_BYTES} bytes)`);
     }
 
-    const { content } = await withTimeout(client.download(emailId, info.part, { uid: true }), 30000, 'Attachment download timed out');
-    const chunks: Buffer[] = [];
-    let total = 0;
-    for await (const chunk of content) {
-      total += chunk.length;
-      if (total > MAX_ATTACHMENT_BYTES) throw new Error(`Attachment exceeds the ${MAX_ATTACHMENT_BYTES} byte limit`);
-      chunks.push(chunk);
+    const downloaded = await withTimeout(client.download(emailId, info.part, { uid: true }), 30000, 'Attachment download timed out');
+    let data: Buffer;
+    if (downloaded && downloaded.content) {
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for await (const chunk of downloaded.content) {
+        total += chunk.length;
+        if (total > MAX_ATTACHMENT_BYTES) throw new Error(`Attachment exceeds the ${MAX_ATTACHMENT_BYTES} byte limit`);
+        chunks.push(chunk);
+      }
+      data = Buffer.concat(chunks);
+    } else {
+      // Some servers do not answer a BODY[part] fetch the way ImapFlow expects: take the part from the whole message
+      const whole = await withTimeout(client.fetchOne(emailId, { uid: true, source: true }, { uid: true }), 60000, 'Message download timed out');
+      if (!whole || !whole.source) throw new Error(`Could not download attachment ${info.filename}`);
+      const parsed = await simpleParser(whole.source);
+      const picked = pickParsedAttachment(parsed.attachments || [], info, attachments.indexOf(info));
+      if (!picked) throw new Error(`Could not download attachment ${info.filename}`);
+      data = picked.content;
     }
-    const data = Buffer.concat(chunks);
     return { filename: info.filename, content_type: info.content_type, size: data.length, content: data.toString('base64') };
   } finally {
     await client.logout().catch(() => {});

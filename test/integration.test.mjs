@@ -691,3 +691,25 @@ test('folder_empty clears Trash or Junk only, and respects permissions', { skip 
   assert.equal((await call('folder_empty', { name: 'Junk' })).deleted, 1);
   assert.equal((await env.messages('alice')).length, 1);
 });
+
+test('folders with umlauts work for drafts, search and moves', { skip }, async () => {
+  const name = 'Entwürfe & Notizen';
+  assert.equal((await call('folder_create', { name })).folder, name);
+  const draft = await call('draft_create', { to: ['bob@example.test'], subject: 'Umlaut folder', body: 'x', body_type: 'plain', folder: name });
+  assert.equal(draft.success, true, draft.error);
+  assert.equal(draft.folder, name);
+  assert.ok(draft.email_id);
+
+  const found = await call('emails_find', { folder: name, filters: { subject: 'Umlaut folder' } });
+  assert.equal(found.success, true, found.error);
+  assert.equal(found.count, 1);
+
+  const sent = await call('draft_send', { folder: name, email_id: draft.email_id });
+  assert.equal(sent.success, true, sent.error);
+  assert.equal((await call('emails_find', { folder: name })).count, 0);
+  assert.deepEqual((await env.messages('bob')).map((m) => m.subject), ['Umlaut folder']);
+
+  const renamed = await call('folder_rename', { name, new_name: 'Übrig' });
+  assert.equal(renamed.success, true, renamed.error);
+  assert.equal((await call('folder_delete', { name: 'Übrig' })).success, true);
+});

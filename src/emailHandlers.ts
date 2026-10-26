@@ -3,7 +3,7 @@
  */
 
 import { getAccount, loadAccounts } from './accountManager.js';
-import { searchEmails, findEmailIds, emptyFolder, modifyEmails, listFolders, getAttachment, createFolder, deleteFolder, renameFolder, resolveDraftsFolder } from './imapService.js';
+import { describeError, searchEmails, findEmailIds, emptyFolder, modifyEmails, listFolders, getAttachment, createFolder, deleteFolder, renameFolder, resolveDraftsFolder } from './imapService.js';
 import { sendEmail, replyToEmail, forwardEmail } from './smtpService.js';
 import { createDraft, updateDraft, sendDraft } from './draftService.js';
 import { EmailAccount, EmailFilters } from './types.js';
@@ -98,7 +98,7 @@ export async function handleAccountsList(): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({
       success: false,
-      error: error.message || 'Failed to list accounts'
+      error: describeError(error) || 'Failed to list accounts'
     }, null, 2);
   }
 }
@@ -174,7 +174,7 @@ export async function handleEmailsFind(args: any): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({
       success: false,
-      error: error.message || 'Failed to search emails'
+      error: describeError(error) || 'Failed to search emails'
     }, null, 2);
   }
 }
@@ -302,7 +302,7 @@ export async function handleEmailsModify(args: any): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({
       success: false,
-      error: error.message || 'Failed to modify emails'
+      error: describeError(error) || 'Failed to modify emails'
     }, null, 2);
   }
 }
@@ -348,7 +348,7 @@ export async function handleEmailSend(args: any): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({
       success: false,
-      error: error.message || 'Failed to send email'
+      error: describeError(error) || 'Failed to send email'
     }, null, 2);
   }
 }
@@ -416,7 +416,7 @@ export async function handleEmailRespond(args: any): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({
       success: false,
-      error: error.message || 'Failed to respond to email'
+      error: describeError(error) || 'Failed to respond to email'
     }, null, 2);
   }
 }
@@ -448,7 +448,7 @@ export async function handleFoldersList(args: any): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({
       success: false,
-      error: error.message || 'Failed to list folders'
+      error: describeError(error) || 'Failed to list folders'
     }, null, 2);
   }
 }
@@ -507,7 +507,7 @@ export async function handleDraftCreate(args: any): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({
       success: false,
-      error: error.message || 'Failed to create draft'
+      error: describeError(error) || 'Failed to create draft'
     }, null, 2);
   }
 }
@@ -553,7 +553,7 @@ export async function handleDraftUpdate(args: any): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({
       success: false,
-      error: error.message || 'Failed to update draft'
+      error: describeError(error) || 'Failed to update draft'
     }, null, 2);
   }
 }
@@ -581,7 +581,7 @@ export async function handleDraftSend(args: any): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({
       success: false,
-      error: error.message || 'Failed to send draft'
+      error: describeError(error) || 'Failed to send draft'
     }, null, 2);
   }
 }
@@ -617,7 +617,7 @@ export async function handleDraftDelete(args: any): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({
       success: false,
-      error: error.message || 'Failed to delete draft'
+      error: describeError(error) || 'Failed to delete draft'
     }, null, 2);
   }
 }
@@ -635,7 +635,7 @@ export async function handleFolderCreate(args: any): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({
       success: false,
-      error: error.message || 'Failed to create folder'
+      error: describeError(error) || 'Failed to create folder'
     }, null, 2);
   }
 }
@@ -653,7 +653,7 @@ export async function handleFolderRename(args: any): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({
       success: false,
-      error: error.message || 'Failed to rename folder'
+      error: describeError(error) || 'Failed to rename folder'
     }, null, 2);
   }
 }
@@ -673,7 +673,7 @@ export async function handleFolderEmpty(args: any): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({
       success: false,
-      error: error.message || 'Failed to empty folder'
+      error: describeError(error) || 'Failed to empty folder'
     }, null, 2);
   }
 }
@@ -691,7 +691,7 @@ export async function handleFolderDelete(args: any): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({
       success: false,
-      error: error.message || 'Failed to delete folder'
+      error: describeError(error) || 'Failed to delete folder'
     }, null, 2);
   }
 }
@@ -726,7 +726,7 @@ export async function handleAttachmentGet(args: any): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({
       success: false,
-      error: error.message || 'Failed to get attachment'
+      error: describeError(error) || 'Failed to get attachment'
     }, null, 2);
   }
 }

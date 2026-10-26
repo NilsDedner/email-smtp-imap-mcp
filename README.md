@@ -197,7 +197,7 @@ npm test
 
 `npm test` also runs integration tests against a real Dovecot IMAP server in Docker (`test/docker`), with an SMTP stub that delivers mail between two test accounts. They are skipped automatically when Docker is not available.
 
-To check a real provider, copy `.env.live.example` to `.env.live` (git-ignored), fill in two mailboxes and run `npm run test:live`. The test sends mail between the two accounts, creates its own folders and removes everything it created: it only touches messages whose subject carries a unique run id. At the end it prints provider findings such as the detected Sent, Junk and Trash folders.
+To check a real provider, copy `.env.live.example` to `.env.live` (git-ignored), fill in two mailboxes and run `npm run test:live`. The test sends mail between the two accounts, creates its own folders and removes everything it created: it only touches messages whose subject carries a unique run id. Set `IMAP_DEBUG_LOG=/tmp/imap.log` to record the IMAP conversation of the server for diagnosis (passwords are masked, but folder names, subjects and addresses are visible). At the end it prints provider findings such as the detected Sent, Junk and Trash folders.
 
 Run the compiled stdio server with `npm start`. Build a production container with `docker build -t email-smtp-imap-mcp .`.
 
