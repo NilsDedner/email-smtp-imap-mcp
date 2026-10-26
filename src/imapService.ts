@@ -280,8 +280,14 @@ export interface SearchResult {
 /**
  * UIDs of all matching messages, newest first. The mailbox must already be open.
  */
-async function matchingUids(client: ImapFlow, filters?: EmailFilters, query?: string): Promise<number[]> {
-  const found = await client.search(buildSearchCriteria(filters, query), { uid: true });
+async function matchingUids(client: ImapFlow, filters?: EmailFilters, query?: string, uidRange?: string): Promise<number[]> {
+  const criteria = buildSearchCriteria(filters, query);
+  if (uidRange) {
+    // The range already restricts the search, so "all" must not remain
+    delete criteria.all;
+    criteria.uid = uidRange;
+  }
+  const found = await client.search(criteria, { uid: true });
   let uids = found ? [...found].sort((a, b) => b - a) : [];
 
   // Attachments are only known from BODYSTRUCTURE, so this filter needs a metadata pass
@@ -296,6 +302,78 @@ async function matchingUids(client: ImapFlow, filters?: EmailFilters, query?: st
     uids = uids.filter((uid) => matching.has(uid));
   }
   return uids;
+}
+
+export interface WaitOptions {
+  folder?: string;
+  timeoutMs: number;
+  sinceUid?: number;
+  filters?: EmailFilters;
+  limit?: number;
+  includeContent?: boolean;
+}
+
+export interface WaitResult {
+  emails: EmailMessage[];
+  timed_out: boolean;
+  next_uid: number;
+}
+
+const WAIT_POLL_MS = 15000;
+
+/**
+ * Wait for new messages in a folder. Uses IMAP IDLE where the server pushes news, and re-checks every
+ * 15 seconds anyway so servers without IDLE work too. Returns as soon as a matching new message exists.
+ */
+export async function waitForEmails(account: EmailAccount, options: WaitOptions): Promise<WaitResult> {
+  const folder = options.folder || 'INBOX';
+  const client = await connectImap(account); // own connection: it sits in IDLE for the whole wait
+  try {
+    const mailbox = await withTimeout(client.mailboxOpen(folder, { readOnly: true }), 10000, 'Mailbox open timed out');
+    const startUid = options.sinceUid ?? mailbox.uidNext;
+    const deadline = Date.now() + options.timeoutMs;
+
+    let wake: (() => void) | undefined;
+    client.on('exists', () => wake?.());
+
+    const newUids = async (): Promise<number[]> =>
+      (await matchingUids(client, options.filters, undefined, `${startUid}:*`)).filter((uid) => uid >= startUid).sort((a, b) => a - b);
+
+    let uids = await newUids();
+    while (uids.length === 0 && Date.now() < deadline) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, Math.min(WAIT_POLL_MS, deadline - Date.now()));
+        wake = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        // ImapFlow only idles by itself after a delay; start now. The next command ends the IDLE again.
+        client.idle().catch(() => {});
+      });
+      wake = undefined;
+      uids = await newUids();
+    }
+
+    const emails: EmailMessage[] = [];
+    const page = uids.slice(0, options.limit ?? 10);
+    if (page.length > 0) {
+      const byUid = new Map<number, EmailMessage>();
+      for await (const message of client.fetch(page, {
+        uid: true,
+        flags: true,
+        envelope: true,
+        bodyStructure: true,
+        source: Boolean(options.includeContent)
+      }, { uid: true })) {
+        byUid.set(message.uid, await mapMessage(message, Boolean(options.includeContent), false));
+      }
+      emails.push(...page.flatMap((uid) => byUid.get(uid) || []));
+    }
+    const nextUid = uids.length > 0 ? Math.max(...uids) + 1 : Math.max(startUid, client.mailbox ? (client.mailbox as any).uidNext : startUid);
+    return { emails, timed_out: uids.length === 0, next_uid: nextUid };
+  } finally {
+    await client.logout().catch(() => {});
+  }
 }
 
 /**

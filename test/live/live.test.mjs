@@ -168,11 +168,18 @@ test('drafts: create, update, send, delivery to the second account', { skip }, a
   const updated = await ok('draft_update', { email_id: draft.email_id, body: '<p>second</p>', body_type: 'html' });
   assert.equal((await find('a', draft.folder, subject)).length, 1, 'old draft copy must be gone');
 
+  // Wait for the delivery with emails_wait instead of polling; note how long the provider takes
+  const waitStarted = Date.now();
+  const waiting = call('emails_wait', { account_name: RX, timeout_seconds: 100, filters: { subject } });
+  await pause(1500);
   const sent = await ok('draft_send', { email_id: updated.email_id });
   assert.equal(sent.draft_removed, true);
   assert.equal(sent.sent_copy?.saved, true, `sent copy not saved: ${JSON.stringify(sent.sent_copy)}`);
   soft('Sent folder used', true, sent.sent_copy.folder);
 
+  const arrival = await waiting;
+  assert.equal(arrival.success, true, arrival.error);
+  soft('emails_wait returned on delivery', arrival.timed_out === false, `${Math.round((Date.now() - waitStarted) / 1000)} s from start of waiting`);
   const delivered = await waitFor('delivery', async () => (await findExact(RX, 'INBOX', subject))[0]);
   assert.ok(delivered);
   const withBody = await ok('emails_find', { account_name: RX, filters: { subject }, include_content: true });

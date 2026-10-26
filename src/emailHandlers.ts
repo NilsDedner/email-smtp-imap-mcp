@@ -3,7 +3,7 @@
  */
 
 import { getAccount, loadAccounts } from './accountManager.js';
-import { describeError, searchEmails, findEmailIds, emptyFolder, modifyEmails, listFolders, getAttachment, createFolder, deleteFolder, renameFolder, resolveDraftsFolder } from './imapService.js';
+import { describeError, waitForEmails, searchEmails, findEmailIds, emptyFolder, modifyEmails, listFolders, getAttachment, createFolder, deleteFolder, renameFolder, resolveDraftsFolder } from './imapService.js';
 import { sendEmail, replyToEmail, forwardEmail } from './smtpService.js';
 import { createDraft, updateDraft, sendDraft } from './draftService.js';
 import { EmailAccount, EmailFilters } from './types.js';
@@ -741,6 +741,52 @@ export async function handleAttachmentGet(args: any): Promise<string> {
     return JSON.stringify({
       success: false,
       error: describeError(error) || 'Failed to get attachment'
+    }, null, 2);
+  }
+}
+
+/**
+ * Handle emails_wait tool
+ */
+export async function handleEmailsWait(args: any): Promise<string> {
+  try {
+    args = args || {};
+    const { name, config } = getAccount(args.account_name);
+
+    const timeout = args.timeout_seconds ?? 30;
+    if (!Number.isInteger(timeout) || timeout < 1 || timeout > 120) throw new Error('timeout_seconds must be an integer between 1 and 120');
+    const limit = args.limit ?? 10;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error('limit must be an integer between 1 and 50');
+    const sinceUid = args.since_uid;
+    if (sinceUid !== undefined && (!Number.isInteger(sinceUid) || sinceUid < 1)) throw new Error('since_uid must be a positive integer');
+    const filters = validateFilters(args.filters);
+    validateSearchFilters(filters);
+    validateOptionalBoolean(args.include_content, 'include_content');
+    const folder = validateOptionalString(args.folder, 'folder') || 'INBOX';
+
+    const result = await waitForEmails(config, {
+      folder,
+      timeoutMs: timeout * 1000,
+      sinceUid,
+      filters,
+      limit,
+      includeContent: args.include_content === true
+    });
+
+    return JSON.stringify({
+      success: true,
+      account: name,
+      folder,
+      timed_out: result.timed_out,
+      count: result.emails.length,
+      next_uid: result.next_uid,
+      emails: result.emails
+    }, null, 2);
+
+  } catch (error: any) {
+    return JSON.stringify({
+      success: false,
+      error: describeError(error) || 'Failed to wait for emails'
     }, null, 2);
   }
 }

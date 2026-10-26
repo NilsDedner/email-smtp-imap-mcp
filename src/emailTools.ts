@@ -144,6 +144,38 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
   },
 
   /**
+   * Wait for new mail
+   */
+  "emails_wait": {
+    name: "emails_wait",
+    description: "Wait until new email arrives in a folder, then return it. Use this to wait for a reply or a confirmation instead of searching repeatedly. Returns early as soon as a matching new message exists, or after timeout_seconds with timed_out true. Pass the returned next_uid as since_uid on the next call to continue without missing or repeating messages.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account_name: { type: "string", description: "Name of the email account to use" },
+        folder: { type: "string", default: "INBOX", description: "Folder to watch" },
+        timeout_seconds: {
+          type: "number",
+          minimum: 1,
+          maximum: 120,
+          default: 30,
+          description: "How long to wait at most (1-120). Many clients give up on tool calls after about a minute, so prefer 30-50."
+        },
+        filters: {
+          type: "object",
+          description: "Only count new messages matching these filters (same fields as emails_find, e.g. {\"from\": \"customer@example.com\"})"
+        },
+        since_uid: {
+          type: "number",
+          description: "Report messages with at least this UID. Defaults to messages arriving from now on. Use next_uid from a previous call."
+        },
+        limit: { type: "number", minimum: 1, maximum: 50, default: 10, description: "Maximum number of new messages to return (oldest first)" },
+        include_content: { type: "boolean", default: false, description: "Include the message bodies" }
+      }
+    }
+  },
+
+  /**
    * Modify email states
    */
   "emails_modify": {

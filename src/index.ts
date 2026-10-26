@@ -16,6 +16,7 @@ import {
   handleAccountsList,
   handleEmailsFind,
   handleEmailsModify,
+  handleEmailsWait,
   handleEmailSend,
   handleEmailRespond,
   handleFoldersList,
@@ -99,6 +100,10 @@ async function runServer() {
 
           case "emails_find":
             result = await handleEmailsFind(args);
+            break;
+
+          case "emails_wait":
+            result = await handleEmailsWait(args);
             break;
 
           case "emails_modify":

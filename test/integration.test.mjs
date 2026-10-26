@@ -879,3 +879,67 @@ test('a dropped connection is replaced transparently', { skip }, async () => {
   const second = await call('emails_find', {});
   assert.equal(second.success, true, second.error);
 });
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('emails_wait times out quietly when nothing arrives', { skip }, async () => {
+  await env.seed('alice', { subject: 'Old mail' });
+  const started = Date.now();
+  const result = await call('emails_wait', { timeout_seconds: 2 });
+  assert.equal(result.success, true, result.error);
+  assert.equal(result.timed_out, true);
+  assert.deepEqual(result.emails, []);
+  assert.ok(Date.now() - started >= 1800, 'waits for the timeout');
+  assert.ok(result.next_uid > 1);
+});
+
+test('emails_wait returns as soon as matching mail arrives', { skip }, async () => {
+  const started = Date.now();
+  const waiting = call('emails_wait', { timeout_seconds: 60, filters: { from: 'wanted@example.test' } });
+  await sleep(1000);
+  await env.seed('alice', { subject: 'Not interesting', from: 'noise@example.test' });
+  await sleep(500);
+  await env.seed('alice', { subject: 'The reply', from: 'wanted@example.test', body: 'here you go' });
+
+  const result = await waiting;
+  assert.equal(result.success, true, result.error);
+  assert.equal(result.timed_out, false);
+  assert.deepEqual(result.emails.map((m) => m.subject), ['The reply']);
+  assert.ok(Date.now() - started < 20000, `returned early (took ${Date.now() - started} ms)`);
+
+  // Continue from next_uid: nothing new, then one more message
+  const quiet = await call('emails_wait', { timeout_seconds: 1, since_uid: result.next_uid, filters: { from: 'wanted@example.test' } });
+  assert.equal(quiet.timed_out, true);
+  assert.deepEqual(quiet.emails, []);
+  const later = call('emails_wait', { timeout_seconds: 30, since_uid: result.next_uid, include_content: true });
+  await sleep(500);
+  await env.seed('alice', { subject: 'Second', from: 'wanted@example.test', body: 'second body' });
+  const second = await later;
+  assert.deepEqual(second.emails.map((m) => m.subject), ['Second']);
+  assert.match(second.emails[0].body, /second body/);
+});
+
+test('emails_wait sees mail delivered through SMTP and reports old mail via since_uid', { skip }, async () => {
+  const oldUid = await env.seed('alice', { subject: 'Already there' });
+  const immediate = await call('emails_wait', { timeout_seconds: 5, since_uid: oldUid });
+  assert.equal(immediate.timed_out, false);
+  assert.deepEqual(immediate.emails.map((m) => m.subject), ['Already there']);
+
+  const waiting = call('emails_wait', { timeout_seconds: 30, filters: { subject: 'Via SMTP' } });
+  await sleep(800);
+  const sent = await call('email_send', { to: ['alice@example.test'], subject: 'Via SMTP', body: 'x', body_type: 'plain' });
+  assert.equal(sent.success, true, sent.error);
+  const result = await waiting;
+  assert.deepEqual(result.emails.map((m) => m.subject), ['Via SMTP']);
+});
+
+test('emails_wait validates input and works on read-only accounts and other folders', { skip }, async () => {
+  for (const args of [{ timeout_seconds: 0 }, { timeout_seconds: 500 }, { limit: 0 }, { since_uid: -1 }, { include_content: 'yes' }, { filters: { min_size: -1 } }]) {
+    assert.equal((await call('emails_wait', args)).success, false, JSON.stringify(args));
+  }
+  assert.equal((await call('emails_wait', { folder: 'NoSuchFolder', timeout_seconds: 1 })).success, false);
+  const readOnly = await call('emails_wait', { account_name: 'bob', timeout_seconds: 1 });
+  assert.equal(readOnly.success, true, readOnly.error);
+  const trash = await call('emails_wait', { folder: 'Trash', timeout_seconds: 1 });
+  assert.equal(trash.success, true, trash.error);
+});
