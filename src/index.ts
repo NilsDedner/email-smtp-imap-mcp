@@ -26,6 +26,7 @@ import {
   handleDraftDelete,
   handleFolderCreate,
   handleFolderRename,
+  handleFolderEmpty,
   handleFolderDelete
 } from "./emailHandlers.js";
 import { loadEnvironment } from './environment.js';
@@ -141,6 +142,10 @@ async function runServer() {
 
           case "folder_rename":
             result = await handleFolderRename(args);
+            break;
+
+          case "folder_empty":
+            result = await handleFolderEmpty(args);
             break;
 
           case "folder_delete":

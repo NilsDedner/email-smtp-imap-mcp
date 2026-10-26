@@ -507,3 +507,187 @@ test('emails_modify copies messages and leaves the originals', { skip }, async (
   }
   assert.equal((await env.messages('alice', 'Copies')).length, 1);
 });
+
+async function seedMany(count, make) {
+  const uids = [];
+  for (let i = 1; i <= count; i++) uids.push(await env.seed('alice', make(i)));
+  return uids;
+}
+
+test('emails_find pages through results with offset and order', { skip }, async () => {
+  await seedMany(7, (i) => ({ subject: `Mail ${i}` }));
+
+  const first = await call('emails_find', { limit: 3 });
+  assert.deepEqual(first.emails.map((e) => e.subject), ['Mail 7', 'Mail 6', 'Mail 5']);
+  assert.equal(first.total_found, 7);
+  assert.equal(first.has_more, true);
+  assert.equal(first.next_offset, 3);
+
+  const second = await call('emails_find', { limit: 3, offset: first.next_offset });
+  assert.deepEqual(second.emails.map((e) => e.subject), ['Mail 4', 'Mail 3', 'Mail 2']);
+
+  const last = await call('emails_find', { limit: 3, offset: 6 });
+  assert.deepEqual(last.emails.map((e) => e.subject), ['Mail 1']);
+  assert.equal(last.has_more, false);
+  assert.equal(last.next_offset, undefined);
+
+  const oldest = await call('emails_find', { limit: 2, order: 'oldest' });
+  assert.deepEqual(oldest.emails.map((e) => e.subject), ['Mail 1', 'Mail 2']);
+
+  const beyond = await call('emails_find', { offset: 50 });
+  assert.equal(beyond.success, true);
+  assert.deepEqual(beyond.emails, []);
+  assert.equal(beyond.total_found, 7);
+
+  assert.equal((await call('emails_find', { offset: -1 })).success, false);
+  assert.equal((await call('emails_find', { order: 'sideways' })).success, false);
+});
+
+test('emails_find supports answered, forwarded, cc and size filters', { skip }, async () => {
+  const small = await env.seed('alice', { subject: 'Small', flags: ['\\Answered'] });
+  await env.seed('alice', { subject: 'Big', body: 'x'.repeat(20000), flags: ['$Forwarded'] });
+  await env.withImap('alice', async (client) => {
+    const lock = await client.getMailboxLock('INBOX');
+    try {
+      await client.append('INBOX', Buffer.from(
+        'From: a@example.test\r\nTo: alice@example.test\r\nCc: watcher@example.test\r\nSubject: With cc\r\nMessage-ID: <cc@example.test>\r\nDate: ' + new Date().toUTCString() + '\r\n\r\nhi'
+      ));
+    } finally {
+      lock.release();
+    }
+  });
+
+  const subjects = async (filters) => (await call('emails_find', { filters })).emails.map((e) => e.subject).sort();
+  assert.deepEqual(await subjects({ is_answered: true }), ['Small']);
+  assert.deepEqual(await subjects({ is_answered: false }), ['Big', 'With cc']);
+  assert.deepEqual(await subjects({ is_forwarded: true }), ['Big']);
+  assert.deepEqual(await subjects({ is_forwarded: false }), ['Small', 'With cc']);
+  assert.deepEqual(await subjects({ cc: 'watcher@example.test' }), ['With cc']);
+  assert.deepEqual(await subjects({ min_size: 10000 }), ['Big']);
+  assert.deepEqual(await subjects({ max_size: 10000 }), ['Small', 'With cc']);
+  assert.equal((await call('emails_find', { filters: { min_size: -5 } })).success, false);
+  assert.ok(small);
+});
+
+test('has_attachments filter pages correctly', { skip }, async () => {
+  for (let i = 1; i <= 3; i++) {
+    await env.seed('alice', { subject: `Plain ${i}` });
+    await env.seed('alice', { subject: `Files ${i}`, attachments: [{ filename: `f${i}.txt`, content: 'data', contentType: 'text/plain' }] });
+  }
+  const page = await call('emails_find', { filters: { has_attachments: true }, limit: 2 });
+  assert.deepEqual(page.emails.map((e) => e.subject), ['Files 3', 'Files 2']);
+  assert.equal(page.total_found, 3);
+  const rest = await call('emails_find', { filters: { has_attachments: true }, limit: 2, offset: 2 });
+  assert.deepEqual(rest.emails.map((e) => e.subject), ['Files 1']);
+  const without = await call('emails_find', { filters: { has_attachments: false } });
+  assert.equal(without.total_found, 3);
+});
+
+test('bulk emails_modify needs a matching dry run and expected_count', { skip }, async () => {
+  await seedMany(4, (i) => ({ subject: `Newsletter ${i}`, from: 'news@example.test' }));
+  await seedMany(2, (i) => ({ subject: `Personal ${i}`, from: 'friend@example.test' }));
+  await call('folder_create', { name: 'News' });
+  const selection = { filters: { from: 'news@example.test' } };
+
+  const dry = await call('emails_modify', { ...selection, dry_run: true });
+  assert.equal(dry.success, true);
+  assert.equal(dry.dry_run, true);
+  assert.equal(dry.matched, 4);
+  assert.equal(dry.sample.length, 4);
+  assert.equal((await env.messages('alice')).length, 6, 'dry run must not change anything');
+
+  const noCount = await call('emails_modify', { ...selection, move_to_folder: 'News' });
+  assert.equal(noCount.success, false);
+  assert.match(noCount.error, /expected_count: 4/);
+  const wrongCount = await call('emails_modify', { ...selection, move_to_folder: 'News', expected_count: 3 });
+  assert.equal(wrongCount.success, false);
+  assert.match(wrongCount.error, /does not match/);
+  assert.equal((await env.messages('alice')).length, 6);
+
+  const done = await call('emails_modify', { ...selection, move_to_folder: 'News', expected_count: 4 });
+  assert.equal(done.success, true);
+  assert.equal(done.modified, 4);
+  assert.equal((await env.messages('alice', 'News')).length, 4);
+  assert.deepEqual((await env.messages('alice')).map((m) => m.subject).sort(), ['Personal 1', 'Personal 2']);
+
+  const none = await call('emails_modify', { filters: { from: 'nobody@example.test' }, mark_read: true });
+  assert.equal(none.success, true);
+  assert.equal(none.modified, 0);
+
+  const byQuery = await call('emails_modify', { query: 'Personal', mark_read: true, expected_count: 2 });
+  assert.equal(byQuery.modified, 2);
+  assert.ok((await env.messages('alice')).every((m) => m.flags.has('\\Seen')));
+});
+
+test('bulk emails_modify refuses unsafe selections', { skip }, async () => {
+  const uid = await env.seed('alice', { subject: 'Anything' });
+  const cases = [
+    [{ filters: {}, mark_read: true }, /at least one filter/],
+    [{ email_ids: [String(uid)], filters: { from: 'a' }, mark_read: true }, /not both/],
+    [{ email_ids: [String(uid)], dry_run: true }, /only apply to filters/],
+    [{ filters: { from: 'a' } }, /At least one modification/]
+  ];
+  for (const [args, pattern] of cases) {
+    const result = await call('emails_modify', args);
+    assert.equal(result.success, false);
+    assert.match(result.error, pattern);
+  }
+  assert.equal((await call('emails_modify', { account_name: 'bob', filters: { from: 'a' }, delete: true, expected_count: 0 })).success, false);
+
+  const locked = await call('emails_modify', { account_name: 'alice_safe', filters: { subject: 'Anything' }, delete: true, permanent: true, expected_count: 1 });
+  assert.equal(locked.success, false);
+  assert.match(locked.error, /ALLOW_PERMANENT_DELETE/);
+  assert.equal((await env.messages('alice')).length, 1);
+
+  const dry = await call('emails_modify', { account_name: 'bob', filters: { subject: 'x' }, dry_run: true });
+  assert.equal(dry.success, true, 'dry run is a read and works on read-only accounts');
+});
+
+test('mark_spam moves to Junk and mark_not_spam brings it back', { skip }, async () => {
+  const uid = await env.seed('alice', { subject: 'Win a prize' });
+
+  const spam = await call('emails_modify', { email_ids: [String(uid)], mark_spam: true });
+  assert.equal(spam.success, true);
+  assert.equal(spam.moved_to, 'Junk');
+  assert.deepEqual(await env.messages('alice'), []);
+  const [junked] = await env.messages('alice', 'Junk');
+  assert.equal(junked.subject, 'Win a prize');
+  assert.ok(junked.flags.has('$Junk'));
+
+  const ham = await call('emails_modify', { folder: 'Junk', email_ids: [String(junked.uid)], mark_not_spam: true });
+  assert.equal(ham.success, true);
+  assert.equal(ham.moved_to, 'INBOX');
+  const [restored] = await env.messages('alice');
+  assert.equal(restored.subject, 'Win a prize');
+  assert.ok(restored.flags.has('$NotJunk') && !restored.flags.has('$Junk'));
+
+  const conflict = await call('emails_modify', { email_ids: [String(restored.uid)], mark_spam: true, move_to_folder: 'Trash' });
+  assert.equal(conflict.success, false);
+  assert.equal((await call('emails_modify', { account_name: 'bob', email_ids: ['1'], mark_spam: true })).success, false);
+});
+
+test('folder_empty clears Trash or Junk only, and respects permissions', { skip }, async () => {
+  await seedMany(3, (i) => ({ folder: 'Trash', subject: `Trash ${i}` }));
+  await env.seed('alice', { folder: 'Junk', subject: 'Junk 1' });
+  await env.seed('alice', { subject: 'Keep' });
+  await call('folder_create', { name: 'Other' });
+
+  for (const name of ['INBOX', 'Sent', 'Other', 'Missing']) {
+    assert.equal((await call('folder_empty', { name })).success, false, `${name} must not be emptied`);
+  }
+  assert.equal((await call('folder_empty', { account_name: 'alice_safe', name: 'Trash' })).success, false);
+  assert.equal((await call('folder_empty', { account_name: 'bob', name: 'Trash' })).success, false);
+  assert.equal((await env.messages('alice', 'Trash')).length, 3);
+  assert.equal((await call('folder_empty', { name: 'Trash', older_than_days: -1 })).success, false);
+
+  const recent = await call('folder_empty', { name: 'Trash', older_than_days: 30 });
+  assert.equal(recent.success, true);
+  assert.equal(recent.deleted, 0, 'fresh messages are not older than 30 days');
+
+  const emptied = await call('folder_empty', { name: 'Trash' });
+  assert.equal(emptied.success, true);
+  assert.deepEqual([emptied.folder, emptied.deleted], ['Trash', 3]);
+  assert.deepEqual(await env.messages('alice', 'Trash'), []);
+  assert.equal((await call('folder_empty', { name: 'Junk' })).deleted, 1);
+  assert.equal((await env.messages('alice')).length, 1);
+});

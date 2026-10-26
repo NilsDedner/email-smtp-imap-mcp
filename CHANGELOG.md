@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- `emails_find` pages with `offset` and `order` and reports `total_found`, `has_more` and `next_offset`; new filters `is_answered`, `is_forwarded`, `is_draft`, `cc`, `bcc`, `min_size` and `max_size`.
+- `emails_modify` can act on search results (`filters`/`query`) with a `dry_run` and a required `expected_count`, and can report mail as spam (`mark_spam`/`mark_not_spam`).
+- `folder_empty` clears the Trash or Junk folder.
 - `folder_rename` renames or moves folders; `emails_modify` can copy messages with `copy_to_folder`; `folders_list` reports parent, separator and special-use type.
 
 ### Fixed

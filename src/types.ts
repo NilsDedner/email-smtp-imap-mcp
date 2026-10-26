@@ -33,6 +33,13 @@ export interface EmailFilters {
   has_attachments?: boolean;
   is_unread?: boolean;
   is_flagged?: boolean;
+  is_answered?: boolean;
+  is_forwarded?: boolean;
+  is_draft?: boolean;
+  cc?: string;
+  bcc?: string;
+  min_size?: number;
+  max_size?: number;
   after_date?: string;
   before_date?: string;
 }

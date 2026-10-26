@@ -92,6 +92,14 @@ export function buildSearchCriteria(filters?: EmailFilters, query?: string): any
   if (filters?.is_unread === true) criteria.seen = false;
   if (filters?.is_unread === false) criteria.seen = true;
   if (filters?.is_flagged !== undefined) criteria.flagged = filters.is_flagged;
+  if (filters?.is_answered !== undefined) criteria.answered = filters.is_answered;
+  if (filters?.is_draft !== undefined) criteria.draft = filters.is_draft;
+  if (filters?.is_forwarded === true) criteria.keyword = '$Forwarded';
+  if (filters?.is_forwarded === false) criteria.unKeyword = '$Forwarded';
+  if (filters?.cc) criteria.cc = filters.cc;
+  if (filters?.bcc) criteria.bcc = filters.bcc;
+  if (filters?.min_size !== undefined) criteria.larger = filters.min_size;
+  if (filters?.max_size !== undefined) criteria.smaller = filters.max_size;
   if (filters?.after_date) criteria.since = new Date(filters.after_date);
   if (filters?.before_date) criteria.before = new Date(filters.before_date);
   if (query?.trim()) {
@@ -112,105 +120,110 @@ export function buildSearchCriteria(filters?: EmailFilters, query?: string): any
   return criteria;
 }
 
+export interface SearchOptions {
+  filters?: EmailFilters;
+  query?: string;
+  folder?: string;
+  limit?: number;
+  offset?: number;
+  order?: 'newest' | 'oldest';
+  includeContent?: boolean;
+  includeAttachments?: boolean;
+}
+
+export interface SearchResult {
+  emails: EmailMessage[];
+  total: number;
+}
+
+/**
+ * UIDs of all matching messages, newest first. The mailbox must already be open.
+ */
+async function matchingUids(client: ImapFlow, filters?: EmailFilters, query?: string): Promise<number[]> {
+  const found = await client.search(buildSearchCriteria(filters, query), { uid: true });
+  let uids = found ? [...found].sort((a, b) => b - a) : [];
+
+  // Attachments are only known from BODYSTRUCTURE, so this filter needs a metadata pass
+  if (filters?.has_attachments !== undefined && uids.length > 0) {
+    const wanted = filters.has_attachments;
+    const matching = new Set<number>();
+    for (let i = 0; i < uids.length; i += 200) {
+      for await (const message of client.fetch(uids.slice(i, i + 200), { uid: true, bodyStructure: true }, { uid: true })) {
+        if (structureHasAttachment(message.bodyStructure) === wanted) matching.add(message.uid);
+      }
+    }
+    uids = uids.filter((uid) => matching.has(uid));
+  }
+  return uids;
+}
+
+/**
+ * Find the UIDs matching a search without fetching the messages (for bulk actions)
+ */
+export async function findEmailIds(
+  account: EmailAccount,
+  folder: string,
+  filters?: EmailFilters,
+  query?: string
+): Promise<number[]> {
+  const client = await createImapConnection(account);
+  try {
+    await client.mailboxOpen(folder, { readOnly: true });
+    return await matchingUids(client, filters, query);
+  } finally {
+    await client.logout().catch(() => {});
+  }
+}
+
 /**
  * Search for emails with timeout protection
  */
-export async function searchEmails(
-  account: EmailAccount,
-  filters?: EmailFilters,
-  limit: number = 20,
-  includeContent: boolean = false,
-  includeAttachments: boolean = false,
-  query?: string,
-  folder: string = 'INBOX'
-): Promise<EmailMessage[]> {
+export async function searchEmails(account: EmailAccount, options: SearchOptions = {}): Promise<SearchResult> {
   // Wrap entire operation with 90-second timeout (generous for large mailboxes)
   return withTimeout(
-    searchEmailsInternal(account, filters, limit, includeContent, includeAttachments, query, folder),
+    searchEmailsInternal(account, options),
     90000,
     'Email search operation timed out after 90 seconds - try reducing limit or adding filters'
   );
 }
 
-/**
- * Internal search implementation
- */
-async function searchEmailsInternal(
-  account: EmailAccount,
-  filters?: EmailFilters,
-  limit: number = 20,
-  includeContent: boolean = false,
-  includeAttachments: boolean = false,
-  query?: string,
-  folder: string = 'INBOX'
-): Promise<EmailMessage[]> {
+async function searchEmailsInternal(account: EmailAccount, options: SearchOptions): Promise<SearchResult> {
+  const { filters, query, folder = 'INBOX', limit = 20, offset = 0, order = 'newest' } = options;
+  const includeContent = options.includeContent ?? false;
+  const includeAttachments = options.includeAttachments ?? false;
   const client = await createImapConnection(account);
 
   try {
-    // Open mailbox with timeout
-    const mailbox = await withTimeout(
+    await withTimeout(
       client.mailboxOpen(folder, { readOnly: Boolean(account.read_only) }),
       10000,
       'Mailbox open timed out'
     );
 
-    // Build search criteria
-    const searchCriteria = buildSearchCriteria(filters, query);
+    const uids = await matchingUids(client, filters, query);
+    if (order === 'oldest') uids.reverse();
+    const pageUids = uids.slice(offset, offset + limit);
 
-    // For efficiency: if no specific filters, fetch most recent messages by sequence number
-    let messages: EmailMessage[] = [];
-
-    if (
-      searchCriteria.all === true &&
-      filters?.has_attachments === undefined &&
-      mailbox.exists > 0
-    ) {
-      // Fetch last N messages efficiently by sequence number (much faster)
-      const start = Math.max(1, mailbox.exists - limit + 1);
-      const end = mailbox.exists;
-
-      for await (const message of client.fetch(`${start}:${end}`, {
-      uid: true,
-      flags: true,
-      envelope: true,
-      bodyStructure: true,
+    const byUid = new Map<number, EmailMessage>();
+    if (pageUids.length > 0) {
+      for await (const message of client.fetch(pageUids, {
+        uid: true,
+        flags: true,
+        envelope: true,
+        bodyStructure: true,
         source: includeContent || includeAttachments
-      })) {
-        messages.push(await mapMessage(message, includeContent, includeAttachments));
+      }, { uid: true })) {
+        byUid.set(message.uid, await mapMessage(message, includeContent, includeAttachments));
       }
-
-      // Sort by date descending (newest first) and limit
-      messages.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      messages = messages.slice(0, limit);
-    } else {
-      const foundUids = await client.search(searchCriteria, { uid: true });
-      const pendingUids = foundUids ? [...foundUids].sort((a, b) => b - a) : [];
-      const batchSize = Math.max(50, limit);
-
-      while (pendingUids.length > 0 && messages.length < limit) {
-        const batch = pendingUids.splice(0, batchSize);
-        for await (const message of client.fetch(batch, {
-          uid: true,
-          flags: true,
-          envelope: true,
-          bodyStructure: true,
-          source: includeContent || includeAttachments
-        }, { uid: true })) {
-          const mapped = await mapMessage(message, includeContent, includeAttachments);
-          if (filters?.has_attachments === undefined || mapped.has_attachments === filters.has_attachments) {
-            messages.push(mapped);
-          }
-        }
-      }
-
-      messages.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      messages = messages.slice(0, limit);
     }
 
-    return messages;
+    return {
+      emails: pageUids.flatMap((uid) => byUid.get(uid) || []),
+      total: uids.length
+    };
 
   } finally {
-    await client.logout();
+    await client.logout().catch(() => {});
   }
 }
 
@@ -229,18 +242,24 @@ export async function modifyEmails(
     delete?: boolean;
     permanent?: boolean;
     copyToFolder?: string;
+    markSpam?: boolean;
+    markNotSpam?: boolean;
     folder?: string;
   }
-): Promise<{ success: boolean; modified: number; errors?: string[]; deleted_to?: string }> {
+): Promise<{ success: boolean; modified: number; errors?: string[]; deleted_to?: string; moved_to?: string }> {
   const client = await createImapConnection(account);
 
   try {
     await client.mailboxOpen(options.folder || 'INBOX');
 
     let trashFolder: string | undefined;
-    if (options.delete && !options.permanent) {
-      trashFolder = resolveSpecialFolder(await client.list(), '\\Trash', 'Trash');
+    let junkFolder: string | undefined;
+    if ((options.delete && !options.permanent) || options.markSpam) {
+      const folders = await client.list();
+      if (options.delete && !options.permanent) trashFolder = resolveSpecialFolder(folders, '\\Trash', 'Trash');
+      if (options.markSpam) junkFolder = resolveJunkFolder(folders);
     }
+    const sourceFolder = options.folder || 'INBOX';
 
     const errors: string[] = [];
     let modified = 0;
@@ -269,6 +288,21 @@ export async function modifyEmails(
         }
 
         // ImapFlow resolves to false (instead of throwing) when the server refuses COPY/MOVE
+        if (options.markSpam) {
+          await client.messageFlagsAdd(uid, ['$Junk'], { uid: true });
+          await client.messageFlagsRemove(uid, ['$NotJunk'], { uid: true });
+          if (junkFolder !== sourceFolder && !await client.messageMove(uid, junkFolder!, { uid: true })) {
+            throw new Error(`could not move to "${junkFolder}"`);
+          }
+        }
+        if (options.markNotSpam) {
+          await client.messageFlagsAdd(uid, ['$NotJunk'], { uid: true });
+          await client.messageFlagsRemove(uid, ['$Junk'], { uid: true });
+          if (sourceFolder !== 'INBOX' && !await client.messageMove(uid, 'INBOX', { uid: true })) {
+            throw new Error('could not move to "INBOX"');
+          }
+        }
+
         if (options.copyToFolder) {
           if (!await client.messageCopy(uid, options.copyToFolder, { uid: true })) {
             throw new Error(`could not copy to "${options.copyToFolder}" (does the folder exist?)`);
@@ -298,7 +332,8 @@ export async function modifyEmails(
       success: errors.length === 0,
       modified,
       errors: errors.length > 0 ? errors : undefined,
-      ...(trashFolder ? { deleted_to: trashFolder } : {})
+      ...(trashFolder ? { deleted_to: trashFolder } : {}),
+      ...(junkFolder ? { moved_to: junkFolder } : options.markNotSpam && sourceFolder !== 'INBOX' ? { moved_to: 'INBOX' } : {})
     };
 
   } finally {
@@ -315,6 +350,46 @@ export function resolveSpecialFolder(
   fallback: string
 ): string {
   return folders.find((folder) => folder.specialUse === specialUse)?.path || fallback;
+}
+
+/**
+ * The spam folder: the one flagged \\Junk, else a common name (Junk, Spam, ...)
+ */
+export function resolveJunkFolder(folders: Array<{ path: string; specialUse?: string }>): string {
+  const flagged = folders.find((folder) => folder.specialUse === '\\Junk');
+  if (flagged) return flagged.path;
+  const names = ['junk', 'spam', 'junk e-mail', 'junk email', 'bulk mail'];
+  const byName = folders.find((folder) => names.includes(folder.path.toLowerCase()));
+  if (byName) return byName.path;
+  throw new Error('No Junk/Spam folder found; create one or use move_to_folder');
+}
+
+/**
+ * Permanently remove all (or only old) messages from a Trash or Junk folder
+ */
+export async function emptyFolder(
+  account: EmailAccount,
+  path: string,
+  olderThanDays?: number
+): Promise<{ folder: string; deleted: number }> {
+  const client = await createImapConnection(account);
+  try {
+    const match = (await client.list()).find((folder) => folder.path === path);
+    if (!match) throw new Error(`Folder not found: ${path}`);
+    if (match.specialUse !== '\\Trash' && match.specialUse !== '\\Junk') {
+      throw new Error(`Only Trash and Junk folders can be emptied; ${path} is not one (use emails_modify to delete messages elsewhere)`);
+    }
+    await client.mailboxOpen(path);
+    const criteria: any = olderThanDays === undefined
+      ? { all: true }
+      : { before: new Date(Date.now() - olderThanDays * 86400000) };
+    const uids = await client.search(criteria, { uid: true });
+    if (!uids || uids.length === 0) return { folder: path, deleted: 0 };
+    await withTimeout(client.messageDelete(uids, { uid: true }), 60000, 'Emptying folder timed out');
+    return { folder: path, deleted: uids.length };
+  } finally {
+    await client.logout().catch(() => {});
+  }
 }
 
 /**

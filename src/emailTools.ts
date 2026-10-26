@@ -58,6 +58,34 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
               type: "boolean",
               description: "Filter flagged/starred emails"
             },
+            is_answered: {
+              type: "boolean",
+              description: "Filter emails that have (true) or have not (false) been replied to"
+            },
+            is_forwarded: {
+              type: "boolean",
+              description: "Filter emails that have (true) or have not (false) been forwarded"
+            },
+            is_draft: {
+              type: "boolean",
+              description: "Filter drafts"
+            },
+            cc: {
+              type: "string",
+              description: "Filter by CC address"
+            },
+            bcc: {
+              type: "string",
+              description: "Filter by BCC address"
+            },
+            min_size: {
+              type: "number",
+              description: "Only emails larger than this many bytes"
+            },
+            max_size: {
+              type: "number",
+              description: "Only emails smaller than this many bytes"
+            },
             after_date: {
               type: "string",
               description: "Filter emails after this date (ISO format: YYYY-MM-DD)"
@@ -74,7 +102,19 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
           minimum: 1,
           maximum: 100,
           default: 20,
-          description: "Maximum number of emails to return (1-100)"
+          description: "Maximum number of emails to return per page (1-100)"
+        },
+        offset: {
+          type: "number",
+          minimum: 0,
+          default: 0,
+          description: "Number of matching emails to skip, for paging. Use next_offset from the previous result."
+        },
+        order: {
+          type: "string",
+          enum: ["newest", "oldest"],
+          default: "newest",
+          description: "Sort order (by arrival in the folder)"
         },
         include_content: {
           type: "boolean",
@@ -111,7 +151,31 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
         email_ids: {
           type: "array",
           items: { type: "string" },
-          description: "Array of email IDs to modify (from emails_find results)"
+          description: "Array of email IDs to modify (from emails_find results). Alternatively select by filters/query."
+        },
+        filters: {
+          type: "object",
+          description: "Bulk selection: modify every email matching these filters (same fields as emails_find). Requires expected_count; check the selection first with dry_run. At most 500 emails per call."
+        },
+        query: {
+          type: "string",
+          description: "Bulk selection by text search (same as emails_find query)"
+        },
+        dry_run: {
+          type: "boolean",
+          description: "With filters/query: only report how many emails match and show a sample, change nothing"
+        },
+        expected_count: {
+          type: "number",
+          description: "With filters/query: the number of matches reported by dry_run. The call is refused if the count differs."
+        },
+        mark_spam: {
+          type: "boolean",
+          description: "Report as spam: flag $Junk and move to the Junk/Spam folder"
+        },
+        mark_not_spam: {
+          type: "boolean",
+          description: "Report as not spam: flag $NotJunk and move back to INBOX"
         },
         mark_read: {
           type: "boolean",
@@ -151,7 +215,7 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
           description: "With delete: remove emails permanently instead of moving them to Trash. Cannot be undone."
         }
       },
-      required: ["email_ids"]
+      required: []
     }
   },
 
@@ -468,6 +532,23 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
         new_name: { type: "string", description: "New folder path" }
       },
       required: ["name", "new_name"]
+    }
+  },
+
+  /**
+   * Empty Trash or Junk
+   */
+  "folder_empty": {
+    name: "folder_empty",
+    description: "Permanently remove all messages from the Trash or Junk folder, optionally only those older than a number of days. Other folders cannot be emptied. Cannot be undone.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account_name: { type: "string", description: "Name of the email account to use" },
+        name: { type: "string", description: "Path of the Trash or Junk folder (from folders_list)" },
+        older_than_days: { type: "number", description: "Only remove messages older than this many days" }
+      },
+      required: ["name"]
     }
   },
 

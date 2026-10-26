@@ -3,7 +3,7 @@
  */
 
 import { getAccount, loadAccounts } from './accountManager.js';
-import { searchEmails, modifyEmails, listFolders, getAttachment, createFolder, deleteFolder, renameFolder, resolveDraftsFolder } from './imapService.js';
+import { searchEmails, findEmailIds, emptyFolder, modifyEmails, listFolders, getAttachment, createFolder, deleteFolder, renameFolder, resolveDraftsFolder } from './imapService.js';
 import { sendEmail, replyToEmail, forwardEmail } from './smtpService.js';
 import { createDraft, updateDraft, sendDraft } from './draftService.js';
 import { EmailAccount, EmailFilters } from './types.js';
@@ -103,6 +103,27 @@ export async function handleAccountsList(): Promise<string> {
   }
 }
 
+function validateSearchFilters(filters: EmailFilters): void {
+    for (const stringField of ['from', 'to', 'subject'] as const) {
+      validateOptionalString(filters[stringField], `filters.${stringField}`);
+    }
+    for (const stringField of ['cc', 'bcc'] as const) {
+      validateOptionalString(filters[stringField], `filters.${stringField}`);
+    }
+    for (const booleanField of ['has_attachments', 'is_unread', 'is_flagged', 'is_answered', 'is_forwarded', 'is_draft'] as const) {
+      validateOptionalBoolean(filters[booleanField], `filters.${booleanField}`);
+    }
+    for (const sizeField of ['min_size', 'max_size'] as const) {
+      const size = filters[sizeField];
+      if (size !== undefined && (!Number.isInteger(size) || size < 0)) throw new Error(`filters.${sizeField} must be a non-negative integer (bytes)`);
+    }
+    for (const dateField of ['after_date', 'before_date'] as const) {
+      if (filters[dateField] !== undefined && (typeof filters[dateField] !== 'string' || Number.isNaN(Date.parse(filters[dateField]!)))) {
+        throw new Error(`filters.${dateField} must be a valid date`);
+      }
+    }
+}
+
 /**
  * Handle emails_find tool
  */
@@ -116,17 +137,7 @@ export async function handleEmailsFind(args: any): Promise<string> {
       throw new Error('filters must be an object');
     }
     const filters: EmailFilters = args.filters || {};
-    for (const stringField of ['from', 'to', 'subject'] as const) {
-      validateOptionalString(filters[stringField], `filters.${stringField}`);
-    }
-    for (const booleanField of ['has_attachments', 'is_unread', 'is_flagged'] as const) {
-      validateOptionalBoolean(filters[booleanField], `filters.${booleanField}`);
-    }
-    for (const dateField of ['after_date', 'before_date'] as const) {
-      if (filters[dateField] !== undefined && (typeof filters[dateField] !== 'string' || Number.isNaN(Date.parse(filters[dateField]!)))) {
-        throw new Error(`filters.${dateField} must be a valid date`);
-      }
-    }
+    validateSearchFilters(filters);
     const limit = args.limit ?? 20;
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('limit must be an integer between 1 and 100');
     if (args.include_content !== undefined && typeof args.include_content !== 'boolean') throw new Error('include_content must be a boolean');
@@ -134,21 +145,29 @@ export async function handleEmailsFind(args: any): Promise<string> {
     const includeContent = args.include_content ?? false;
     const includeAttachments = args.include_attachments ?? false;
 
-    const emails = await searchEmails(
-      config,
+    const offset = args.offset ?? 0;
+    if (!Number.isInteger(offset) || offset < 0) throw new Error('offset must be a non-negative integer');
+    if (args.order !== undefined && args.order !== 'newest' && args.order !== 'oldest') throw new Error('order must be newest or oldest');
+
+    const { emails, total } = await searchEmails(config, {
       filters,
+      query: args.query,
+      folder: validateOptionalString(args.folder, 'folder'),
       limit,
+      offset,
+      order: args.order,
       includeContent,
-      includeAttachments,
-      args.query,
-      validateOptionalString(args.folder, 'folder')
-    );
+      includeAttachments
+    });
 
     return JSON.stringify({
       success: true,
       account: name,
-      total_found: emails.length,
+      total_found: total,
       count: emails.length,
+      offset,
+      has_more: offset + emails.length < total,
+      ...(offset + emails.length < total ? { next_offset: offset + emails.length } : {}),
       emails
     }, null, 2);
 
@@ -160,6 +179,14 @@ export async function handleEmailsFind(args: any): Promise<string> {
   }
 }
 
+const BULK_LIMIT = 500;
+
+function validateFilters(value: unknown): EmailFilters {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('filters must be an object');
+  return value as EmailFilters;
+}
+
 /**
  * Handle emails_modify tool
  */
@@ -168,11 +195,7 @@ export async function handleEmailsModify(args: any): Promise<string> {
     args = args || {};
     const { name, config } = getAccount(args.account_name);
 
-    const emailIds = requireStringArray(args.email_ids, 'email_ids');
-    if (emailIds.some((id) => !/^\d+$/.test(id) || Number(id) < 1)) {
-      throw new Error('email_ids entries must be positive numeric UIDs');
-    }
-    for (const booleanField of ['mark_read', 'mark_unread', 'flag', 'unflag']) {
+    for (const booleanField of ['mark_read', 'mark_unread', 'flag', 'unflag', 'mark_spam', 'mark_not_spam', 'dry_run']) {
       validateOptionalBoolean(args[booleanField], booleanField);
     }
     validateOptionalString(args.move_to_folder, 'move_to_folder');
@@ -180,21 +203,76 @@ export async function handleEmailsModify(args: any): Promise<string> {
     if (copyToFolder && (args.move_to_folder || args.delete)) {
       throw new Error('copy_to_folder cannot be combined with move_to_folder or delete (use move_to_folder to move)');
     }
+    if (args.mark_spam && args.mark_not_spam) throw new Error('mark_spam and mark_not_spam cannot both be true');
+    if ((args.mark_spam || args.mark_not_spam) && (args.move_to_folder || copyToFolder || args.delete)) {
+      throw new Error('mark_spam/mark_not_spam cannot be combined with move_to_folder, copy_to_folder or delete');
+    }
     const folder = validateOptionalString(args.folder, 'folder');
     validateOptionalBoolean(args.delete, 'delete');
     validateOptionalBoolean(args.permanent, 'permanent');
     if (args.permanent && !args.delete) throw new Error('permanent requires delete to be true');
-    assertWritable(config, 'emails_modify');
-    if (args.delete) assertDeleteAllowed(config, Boolean(args.permanent), 'emails_modify delete');
-    if (args.delete && args.move_to_folder) throw new Error('delete and move_to_folder cannot be combined');
-    if (!args.mark_read && !args.mark_unread && !args.flag && !args.unflag && !args.move_to_folder && !args.delete && !copyToFolder) {
-      throw new Error('At least one modification is required');
+
+    const bulk = args.filters !== undefined || args.query !== undefined;
+    if (bulk && args.email_ids !== undefined) throw new Error('Use either email_ids or filters/query, not both');
+    if (!bulk && (args.dry_run !== undefined || args.expected_count !== undefined)) {
+      throw new Error('dry_run and expected_count only apply to filters/query selections');
     }
+    if (args.query !== undefined && typeof args.query !== 'string') throw new Error('query must be a string');
+
+    if (!bulk) requireStringArray(args.email_ids, 'email_ids');
+    if (args.delete && args.move_to_folder) throw new Error('delete and move_to_folder cannot be combined');
+
+    const hasChange = args.mark_read || args.mark_unread || args.flag || args.unflag || args.move_to_folder ||
+      args.delete || copyToFolder || args.mark_spam || args.mark_not_spam;
+    if (!hasChange && !args.dry_run) throw new Error('At least one modification is required');
     if (args.mark_read && args.mark_unread) {
       throw new Error('mark_read and mark_unread cannot both be true');
     }
     if (args.flag && args.unflag) {
       throw new Error('flag and unflag cannot both be true');
+    }
+    if (hasChange) {
+      assertWritable(config, 'emails_modify');
+      if (args.delete) assertDeleteAllowed(config, Boolean(args.permanent), 'emails_modify delete');
+    }
+
+    let emailIds: string[];
+    let matched: { total: number; sample: Array<Record<string, unknown>> } | undefined;
+    if (bulk) {
+      const filters = validateFilters(args.filters);
+      validateSearchFilters(filters);
+      if (Object.keys(filters).length === 0 && !args.query?.trim()) {
+        throw new Error('A bulk selection needs at least one filter or a query');
+      }
+      const uids = await findEmailIds(config, folder || 'INBOX', filters, args.query);
+      if (uids.length > BULK_LIMIT) {
+        throw new Error(`${uids.length} emails match; narrow the selection to at most ${BULK_LIMIT} per call`);
+      }
+      const sample = uids.length
+        ? (await searchEmails(config, { filters, query: args.query, folder, limit: 10 })).emails
+            .map((email) => ({ id: email.id, subject: email.subject, from: email.from, date: email.date }))
+        : [];
+      matched = { total: uids.length, sample };
+
+      if (args.dry_run) {
+        return JSON.stringify({ success: true, account: name, dry_run: true, matched: uids.length, sample }, null, 2);
+      }
+      if (uids.length === 0) {
+        return JSON.stringify({ success: true, account: name, modified: 0, total: 0 }, null, 2);
+      }
+      const expected = args.expected_count;
+      if (!Number.isInteger(expected)) {
+        throw new Error(`${uids.length} emails match. Check them with dry_run: true, then repeat with expected_count: ${uids.length}`);
+      }
+      if (expected !== uids.length) {
+        throw new Error(`expected_count ${expected} does not match the ${uids.length} emails that match now; run dry_run again`);
+      }
+      emailIds = uids.map(String);
+    } else {
+      emailIds = requireStringArray(args.email_ids, 'email_ids');
+      if (emailIds.some((id) => !/^\d+$/.test(id) || Number(id) < 1)) {
+        throw new Error('email_ids entries must be positive numeric UIDs');
+      }
     }
 
     const result = await modifyEmails(config, emailIds, {
@@ -204,6 +282,8 @@ export async function handleEmailsModify(args: any): Promise<string> {
       unflag: args.unflag,
       moveToFolder: args.move_to_folder,
       copyToFolder,
+      markSpam: args.mark_spam,
+      markNotSpam: args.mark_not_spam,
       delete: args.delete,
       permanent: args.permanent,
       folder
@@ -215,6 +295,7 @@ export async function handleEmailsModify(args: any): Promise<string> {
       modified: result.modified,
       total: emailIds.length,
       ...(result.deleted_to ? { deleted_to: result.deleted_to } : {}),
+      ...(result.moved_to ? { moved_to: result.moved_to } : {}),
       errors: result.errors
     }, null, 2);
 
@@ -573,6 +654,26 @@ export async function handleFolderRename(args: any): Promise<string> {
     return JSON.stringify({
       success: false,
       error: error.message || 'Failed to rename folder'
+    }, null, 2);
+  }
+}
+
+/**
+ * Handle folder_empty tool
+ */
+export async function handleFolderEmpty(args: any): Promise<string> {
+  try {
+    args = args || {};
+    const { name: accountName, config } = getAccount(args.account_name);
+    assertDeleteAllowed(config, true, 'folder_empty');
+    const days = args.older_than_days;
+    if (days !== undefined && (!Number.isInteger(days) || days < 0)) throw new Error('older_than_days must be a non-negative integer');
+    const result = await emptyFolder(config, requireString(args.name, 'name'), days);
+    return JSON.stringify({ success: true, account: accountName, ...result }, null, 2);
+  } catch (error: any) {
+    return JSON.stringify({
+      success: false,
+      error: error.message || 'Failed to empty folder'
     }, null, 2);
   }
 }
