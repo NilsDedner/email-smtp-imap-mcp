@@ -102,3 +102,32 @@ test('falls back to well-known localized folder names when nothing is flagged', 
   const flagged = [{ path: 'Papierkorb' }, { path: 'Deleted Items', specialUse: '\\Trash' }];
   assert.equal(resolveSpecialFolder(flagged, '\\Trash', 'Trash'), 'Deleted Items');
 });
+
+test('message extras are validated and applied to mail options', async () => {
+  const { parseMessageExtras, applyMessageExtras, parseKeywords } = await import('../build/messageOptions.js');
+  const extras = parseMessageExtras({ reply_to: ' desk@example.test ', priority: 'high', read_receipt: true, headers: { 'X-Ticket': '1' } });
+  assert.deepEqual(extras, { replyTo: 'desk@example.test', priority: 'high', readReceipt: true, headers: { 'X-Ticket': '1' } });
+
+  const options = {};
+  applyMessageExtras(options, extras, 'me@example.test');
+  assert.deepEqual(options, {
+    replyTo: 'desk@example.test',
+    headers: {
+      'X-Ticket': '1',
+      'X-Priority': '1 (Highest)',
+      'X-MSMail-Priority': 'High',
+      Importance: 'High',
+      'Disposition-Notification-To': 'me@example.test'
+    }
+  });
+
+  const plain = {};
+  applyMessageExtras(plain, { priority: 'normal' }, 'me@example.test');
+  assert.deepEqual(plain, {}, 'normal priority adds no header');
+
+  assert.throws(() => parseMessageExtras({ headers: { 'Content-Type': 'text/evil' } }), /cannot be set/);
+  assert.throws(() => parseMessageExtras({ headers: Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`X-${i}`, 'v'])) }), /At most 20/);
+  assert.deepEqual(parseKeywords(['A', '$b.c-d_e'], 'k'), ['A', '$b.c-d_e']);
+  assert.equal(parseKeywords(undefined, 'k'), undefined);
+  assert.throws(() => parseKeywords(['\\Seen'], 'k'), /keywords/);
+});

@@ -7,6 +7,7 @@ import { describeError, searchEmails, findEmailIds, emptyFolder, modifyEmails, l
 import { sendEmail, replyToEmail, forwardEmail } from './smtpService.js';
 import { createDraft, updateDraft, sendDraft } from './draftService.js';
 import { EmailAccount, EmailFilters } from './types.js';
+import { parseKeywords, parseMessageExtras } from './messageOptions.js';
 
 function requireString(value: unknown, fieldName: string): string {
   if (typeof value !== 'string' || value.trim() === '') {
@@ -106,6 +107,12 @@ export async function handleAccountsList(): Promise<string> {
 function validateSearchFilters(filters: EmailFilters): void {
     for (const stringField of ['from', 'to', 'subject'] as const) {
       validateOptionalString(filters[stringField], `filters.${stringField}`);
+    }
+    for (const keywordField of ['keyword', 'no_keyword'] as const) {
+      if (filters[keywordField] !== undefined) parseKeywords([filters[keywordField]], `filters.${keywordField}`);
+    }
+    if (filters.is_forwarded !== undefined && (filters.keyword || filters.no_keyword)) {
+      throw new Error('is_forwarded cannot be combined with keyword/no_keyword (use keyword "$Forwarded" instead)');
     }
     for (const stringField of ['cc', 'bcc'] as const) {
       validateOptionalString(filters[stringField], `filters.${stringField}`);
@@ -207,6 +214,8 @@ export async function handleEmailsModify(args: any): Promise<string> {
     if ((args.mark_spam || args.mark_not_spam) && (args.move_to_folder || copyToFolder || args.delete)) {
       throw new Error('mark_spam/mark_not_spam cannot be combined with move_to_folder, copy_to_folder or delete');
     }
+    const addKeywords = parseKeywords(args.add_keywords, 'add_keywords');
+    const removeKeywords = parseKeywords(args.remove_keywords, 'remove_keywords');
     const folder = validateOptionalString(args.folder, 'folder');
     validateOptionalBoolean(args.delete, 'delete');
     validateOptionalBoolean(args.permanent, 'permanent');
@@ -223,7 +232,7 @@ export async function handleEmailsModify(args: any): Promise<string> {
     if (args.delete && args.move_to_folder) throw new Error('delete and move_to_folder cannot be combined');
 
     const hasChange = args.mark_read || args.mark_unread || args.flag || args.unflag || args.move_to_folder ||
-      args.delete || copyToFolder || args.mark_spam || args.mark_not_spam;
+      args.delete || copyToFolder || args.mark_spam || args.mark_not_spam || addKeywords || removeKeywords;
     if (!hasChange && !args.dry_run) throw new Error('At least one modification is required');
     if (args.mark_read && args.mark_unread) {
       throw new Error('mark_read and mark_unread cannot both be true');
@@ -284,6 +293,8 @@ export async function handleEmailsModify(args: any): Promise<string> {
       copyToFolder,
       markSpam: args.mark_spam,
       markNotSpam: args.mark_not_spam,
+      addKeywords,
+      removeKeywords,
       delete: args.delete,
       permanent: args.permanent,
       folder
@@ -333,7 +344,8 @@ export async function handleEmailSend(args: any): Promise<string> {
       bcc,
       attachments,
       fromName: config.default_from_name,
-      fromEmail
+      fromEmail,
+      extras: parseMessageExtras(args)
     });
 
     return JSON.stringify({
@@ -485,8 +497,9 @@ export async function handleDraftCreate(args: any): Promise<string> {
       attachments,
       fromName: config.default_from_name,
       fromEmail: validateOptionalString(args.from_email, 'from_email'),
+      ...parseMessageExtras(args),
       folder: validateOptionalString(args.folder, 'folder'),
-      replyTo: replyToEmailId
+      answering: replyToEmailId
         ? {
             emailId: replyToEmailId,
             folder: validateOptionalString(args.reply_to_folder, 'reply_to_folder'),
@@ -536,7 +549,8 @@ export async function handleDraftUpdate(args: any): Promise<string> {
       body: validateOptionalString(args.body, 'body'),
       bodyType: args.body_type === undefined ? undefined : validateBodyType(args.body_type),
       attachments: validateAttachments(args.attachments, 'attachments'),
-      fromEmail: validateOptionalString(args.from_email, 'from_email')
+      fromEmail: validateOptionalString(args.from_email, 'from_email'),
+      ...parseMessageExtras(args)
     };
     if (Object.values(changes).every((value) => value === undefined)) throw new Error('At least one field to change is required');
 

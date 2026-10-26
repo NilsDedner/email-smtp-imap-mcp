@@ -123,6 +123,8 @@ export function buildSearchCriteria(filters?: EmailFilters, query?: string): any
   if (filters?.is_draft !== undefined) criteria.draft = filters.is_draft;
   if (filters?.is_forwarded === true) criteria.keyword = '$Forwarded';
   if (filters?.is_forwarded === false) criteria.unKeyword = '$Forwarded';
+  if (filters?.keyword) criteria.keyword = filters.keyword;
+  if (filters?.no_keyword) criteria.unKeyword = filters.no_keyword;
   if (filters?.cc) criteria.cc = filters.cc;
   if (filters?.bcc) criteria.bcc = filters.bcc;
   if (filters?.min_size !== undefined) criteria.larger = filters.min_size;
@@ -271,6 +273,8 @@ export async function modifyEmails(
     copyToFolder?: string;
     markSpam?: boolean;
     markNotSpam?: boolean;
+    addKeywords?: string[];
+    removeKeywords?: string[];
     folder?: string;
   }
 ): Promise<{ success: boolean; modified: number; errors?: string[]; deleted_to?: string; moved_to?: string }> {
@@ -304,6 +308,13 @@ export async function modifyEmails(
         }
         if (options.markUnread) {
           await client.messageFlagsRemove(uid, ['\\Seen'], { uid: true });
+        }
+
+        if (options.addKeywords?.length) {
+          await client.messageFlagsAdd(uid, options.addKeywords, { uid: true });
+        }
+        if (options.removeKeywords?.length) {
+          await client.messageFlagsRemove(uid, options.removeKeywords, { uid: true });
         }
 
         // Flag/unflag
@@ -826,6 +837,13 @@ export async function getAttachment(
   }
 }
 
+/**
+ * Custom flags (keywords) of a message, i.e. everything that is not a \\System flag
+ */
+function keywordsOf(flags: Set<string> | undefined): string[] {
+  return flags ? [...flags].filter((flag) => !flag.startsWith('\\')).sort() : [];
+}
+
 function structureHasAttachment(node: any): boolean {
   if (!node) return false;
   if (String(node.disposition || '').toLowerCase() === 'attachment') return true;
@@ -871,6 +889,7 @@ async function mapMessage(
     body,
     is_unread: !message.flags?.has('\\Seen'),
     is_flagged: message.flags?.has('\\Flagged') || false,
+    ...(keywordsOf(message.flags).length ? { keywords: keywordsOf(message.flags) } : {}),
     has_attachments: structureHasAttachment(message.bodyStructure),
     ...(attachmentList.length ? { attachment_list: attachmentList } : {}),
     attachments

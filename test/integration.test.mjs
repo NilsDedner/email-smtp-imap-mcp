@@ -713,3 +713,125 @@ test('folders with umlauts work for drafts, search and moves', { skip }, async (
   assert.equal(renamed.success, true, renamed.error);
   assert.equal((await call('folder_delete', { name: 'Übrig' })).success, true);
 });
+
+test('send options reach the recipient as headers', { skip }, async () => {
+  const sent = await call('email_send', {
+    to: ['bob@example.test'],
+    subject: 'With options',
+    body: 'x',
+    body_type: 'plain',
+    reply_to: 'desk@example.test',
+    priority: 'high',
+    read_receipt: true,
+    headers: { 'X-Ticket': '4711' }
+  });
+  assert.equal(sent.success, true, sent.error);
+
+  const [mail] = await env.messages('bob');
+  assert.equal(mail.parsed.replyTo.value[0].address, 'desk@example.test');
+  assert.equal(mail.parsed.headers.get('priority'), 'high'); // mailparser's view of X-Priority/Importance
+  assert.match(mail.parsed.headers.get('disposition-notification-to').text, /alice@example\.test/);
+  assert.equal(mail.parsed.headers.get('x-ticket'), '4711');
+
+  const sentCopy = (await env.messages('alice', 'Sent'))[0];
+  assert.equal(sentCopy.parsed.headers.get('x-ticket'), '4711');
+});
+
+test('invalid send options are refused before anything is sent', { skip }, async () => {
+  const base = { to: ['bob@example.test'], subject: 's', body: 'b' };
+  const bad = [
+    [{ headers: { Subject: 'nope' } }, /cannot be set/],
+    [{ headers: { 'X-A': 'one\r\nBcc: evil@example.test' } }, /single-line/],
+    [{ headers: { 'bad name': 'x' } }, /Invalid header name/],
+    [{ headers: [] }, /must be an object/],
+    [{ priority: 'urgent' }, /priority must be/],
+    [{ reply_to: 'not an address' }, /reply_to/],
+    [{ reply_to: 'a@b.test, c@d.test' }, /reply_to/],
+    [{ read_receipt: 'yes' }, /read_receipt/]
+  ];
+  for (const [extra, pattern] of bad) {
+    for (const tool of ['email_send', 'draft_create']) {
+      const result = await call(tool, { ...base, ...extra });
+      assert.equal(result.success, false, `${tool} ${JSON.stringify(extra)}`);
+      assert.match(result.error, pattern);
+    }
+  }
+  assert.deepEqual(await env.messages('bob'), []);
+  assert.deepEqual(await env.messages('alice', 'Drafts'), []);
+});
+
+test('drafts keep send options across updates and carry them when sent', { skip }, async () => {
+  const draft = await call('draft_create', {
+    to: ['bob@example.test'],
+    subject: 'Draft with options',
+    body: 'v1',
+    body_type: 'plain',
+    reply_to: 'desk@example.test',
+    priority: 'low',
+    read_receipt: true,
+    headers: { 'X-Ticket': '1', 'X-Team': 'ops' }
+  });
+  assert.equal(draft.success, true, draft.error);
+  let [stored] = await env.messages('alice', 'Drafts');
+  assert.equal(stored.parsed.replyTo.value[0].address, 'desk@example.test');
+  assert.equal(stored.parsed.headers.get('priority'), 'low');
+
+  // Changing only the body keeps everything else
+  const bodyOnly = await call('draft_update', { email_id: draft.email_id, body: 'v2' });
+  assert.equal(bodyOnly.success, true, bodyOnly.error);
+  [stored] = await env.messages('alice', 'Drafts');
+  assert.equal(stored.parsed.replyTo.value[0].address, 'desk@example.test');
+  assert.equal(stored.parsed.headers.get('priority'), 'low');
+  assert.ok(stored.parsed.headers.has('disposition-notification-to'));
+  assert.equal(stored.parsed.headers.get('x-ticket'), '1');
+  assert.equal(stored.parsed.headers.get('x-team'), 'ops');
+
+  // Changing options replaces them; empty headers clear the custom ones
+  const changed = await call('draft_update', { email_id: bodyOnly.email_id, priority: 'high', read_receipt: false, headers: { 'X-Ticket': '2' } });
+  assert.equal(changed.success, true, changed.error);
+  [stored] = await env.messages('alice', 'Drafts');
+  assert.equal(stored.parsed.headers.get('priority'), 'high');
+  assert.ok(!stored.parsed.headers.has('disposition-notification-to'));
+  assert.equal(stored.parsed.headers.get('x-ticket'), '2');
+  assert.ok(!stored.parsed.headers.has('x-team'));
+
+  const sent = await call('draft_send', { email_id: changed.email_id });
+  assert.equal(sent.success, true, sent.error);
+  const [mail] = await env.messages('bob');
+  assert.equal(mail.parsed.replyTo.value[0].address, 'desk@example.test');
+  assert.equal(mail.parsed.headers.get('priority'), 'high');
+  assert.equal(mail.parsed.headers.get('x-ticket'), '2');
+});
+
+test('custom keywords can be added, searched, listed and removed', { skip }, async () => {
+  const a = await env.seed('alice', { subject: 'Invoice A' });
+  const b = await env.seed('alice', { subject: 'Invoice B' });
+  await env.seed('alice', { subject: 'Other' });
+
+  const added = await call('emails_modify', { email_ids: [String(a), String(b)], add_keywords: ['Invoice', '$Followup'] });
+  assert.equal(added.success, true, added.error);
+  await call('emails_modify', { email_ids: [String(b)], add_keywords: ['Paid'] });
+
+  const withInvoice = await call('emails_find', { filters: { keyword: 'Invoice' } });
+  assert.deepEqual(withInvoice.emails.map((e) => e.subject).sort(), ['Invoice A', 'Invoice B']);
+  const unpaid = await call('emails_find', { filters: { keyword: 'Invoice', no_keyword: 'Paid' } });
+  assert.deepEqual(unpaid.emails.map((e) => e.subject), ['Invoice A']);
+  assert.deepEqual(unpaid.emails[0].keywords, ['$Followup', 'Invoice']);
+  const other = await call('emails_find', { filters: { subject: 'Other' } });
+  assert.equal(other.emails[0].keywords, undefined);
+
+  // Bulk by keyword, then remove
+  const dry = await call('emails_modify', { filters: { keyword: '$Followup' }, dry_run: true });
+  assert.equal(dry.matched, 2);
+  const removed = await call('emails_modify', { filters: { keyword: '$Followup' }, remove_keywords: ['$Followup'], expected_count: 2 });
+  assert.equal(removed.success, true, removed.error);
+  assert.equal((await call('emails_find', { filters: { keyword: '$Followup' } })).total_found, 0);
+  assert.equal((await call('emails_find', { filters: { keyword: 'Invoice' } })).total_found, 2);
+
+  for (const keywords of [['has space'], ['\\Seen'], [''], [], ['x'.repeat(60)], 'Invoice']) {
+    assert.equal((await call('emails_modify', { email_ids: [String(a)], add_keywords: keywords })).success, false, JSON.stringify(keywords));
+  }
+  const conflict = await call('emails_find', { filters: { keyword: 'Invoice', is_forwarded: true } });
+  assert.equal(conflict.success, false);
+  assert.equal((await call('emails_modify', { account_name: 'bob', email_ids: ['1'], add_keywords: ['X'] })).success, false);
+});

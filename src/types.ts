@@ -36,6 +36,8 @@ export interface EmailFilters {
   is_answered?: boolean;
   is_forwarded?: boolean;
   is_draft?: boolean;
+  keyword?: string;
+  no_keyword?: string;
   cc?: string;
   bcc?: string;
   min_size?: number;
@@ -74,6 +76,7 @@ export interface EmailMessage {
   has_attachments: boolean;
   attachments?: EmailAttachment[];
   attachment_list?: AttachmentInfo[];
+  keywords?: string[];
 }
 
 export interface EmailFolder {

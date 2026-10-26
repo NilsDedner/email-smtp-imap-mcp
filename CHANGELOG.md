@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- `email_send`, `draft_create` and `draft_update` accept `reply_to`, `priority`, `read_receipt` and custom `headers`; drafts keep them across updates and `draft_send`.
+- Custom keywords: `emails_modify` can `add_keywords`/`remove_keywords`, `emails_find` filters with `keyword`/`no_keyword` and lists `keywords`.
 - `emails_find` pages with `offset` and `order` and reports `total_found`, `has_more` and `next_offset`; new filters `is_answered`, `is_forwarded`, `is_draft`, `cc`, `bcc`, `min_size` and `max_size`.
 - `emails_modify` can act on search results (`filters`/`query`) with a `dry_run` and a required `expected_count`, and can report mail as spam (`mark_spam`/`mark_not_spam`).
 - `folder_empty` clears the Trash or Junk folder.

@@ -6,6 +6,7 @@ import nodemailer from 'nodemailer';
 import MailComposer from 'nodemailer/lib/mail-composer/index.js';
 import { randomUUID } from 'node:crypto';
 import { EmailAccount, EmailAttachment, EmailMessage } from './types.js';
+import { applyMessageExtras, MessageExtras } from './messageOptions.js';
 import { appendToSentFolder, flagMessage, getEmailById } from './imapService.js';
 
 export interface SentCopyResult {
@@ -110,6 +111,7 @@ export async function sendEmail(
     fromEmail?: string;
     inReplyTo?: string;
     references?: string[];
+    extras?: MessageExtras;
   }
 ): Promise<SendResult> {
   const transporter = createTransporter(account);
@@ -149,6 +151,8 @@ export async function sendEmail(
       contentType: att.content_type
     }));
   }
+
+  applyMessageExtras(mailOptions, options.extras, fromEmail);
 
   // Fix Message-ID and Date up front so the sent copy matches what was delivered
   mailOptions.messageId = `<${randomUUID()}@${fromEmail.split('@')[1] || 'localhost'}>`;

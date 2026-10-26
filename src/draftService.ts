@@ -6,9 +6,10 @@ import { randomUUID } from 'node:crypto';
 import { simpleParser, ParsedMail, AddressObject } from 'mailparser';
 import { EmailAccount, EmailAttachment } from './types.js';
 import { appendDraft, fetchRawMessage, getEmailById, modifyEmails, resolveDraftsFolder } from './imapService.js';
+import { applyMessageExtras, MessageExtras } from './messageOptions.js';
 import { buildReplyRecipients, buildSentCopy, resolveFromEmail, sendEmail, SendResult } from './smtpService.js';
 
-export interface DraftFields {
+export interface DraftFields extends MessageExtras {
   to?: string[];
   cc?: string[];
   bcc?: string[];
@@ -39,6 +40,7 @@ async function storeDraft(account: EmailAccount, fields: DraftFields, folder?: s
     inReplyTo: fields.inReplyTo,
     references: fields.references
   };
+  applyMessageExtras(mailOptions, fields, fromEmail);
   if (fields.to?.length) mailOptions.to = fields.to.join(', ');
   if (fields.cc?.length) mailOptions.cc = fields.cc.join(', ');
   if (fields.bcc?.length) mailOptions.bcc = fields.bcc.join(', ');
@@ -55,7 +57,7 @@ async function storeDraft(account: EmailAccount, fields: DraftFields, folder?: s
 }
 
 /**
- * Save a draft in the IMAP Drafts folder. With replyTo, the draft answers an existing
+ * Save a draft in the IMAP Drafts folder. With answering, the draft answers an existing
  * message: recipients, "Re:" subject, threading headers and the quoted original are filled in.
  */
 export async function createDraft(
@@ -63,17 +65,17 @@ export async function createDraft(
   options: Omit<DraftFields, 'subject'> & {
     subject?: string;
     folder?: string;
-    replyTo?: { emailId: string; folder?: string; replyAll?: boolean; includeOriginal?: boolean };
+    answering?: { emailId: string; folder?: string; replyAll?: boolean; includeOriginal?: boolean };
   }
 ): Promise<DraftResult> {
   let fields: DraftFields = { ...options, subject: options.subject || '' };
 
-  if (options.replyTo) {
-    const original = await getEmailById(account, options.replyTo.emailId, false, options.replyTo.folder || 'INBOX');
-    if (!original) throw new Error(`Email with ID ${options.replyTo.emailId} not found`);
+  if (options.answering) {
+    const original = await getEmailById(account, options.answering.emailId, false, options.answering.folder || 'INBOX');
+    if (!original) throw new Error(`Email with ID ${options.answering.emailId} not found`);
 
     let body = options.body;
-    if (options.replyTo.includeOriginal !== false && original.body) {
+    if (options.answering.includeOriginal !== false && original.body) {
       body += options.bodyType === 'plain'
         ? `\n\n---\nOriginal Message:\n${original.body}`
         : `<br><br>---<br><strong>Original Message:</strong><br>${original.body}`;
@@ -81,7 +83,7 @@ export async function createDraft(
     fields = {
       ...fields,
       body,
-      to: buildReplyRecipients(account, original, options.replyTo.replyAll || false, options.to),
+      to: buildReplyRecipients(account, original, options.answering.replyAll || false, options.to),
       subject: options.subject || (original.subject.startsWith('Re:') ? original.subject : `Re: ${original.subject}`),
       inReplyTo: original.message_id,
       references: original.message_id ? [original.message_id] : undefined
@@ -96,6 +98,33 @@ function addresses(value: AddressObject | AddressObject[] | undefined): string[]
   if (!value) return [];
   const list = Array.isArray(value) ? value : [value];
   return list.flatMap((entry) => entry.value.map((address) => address.address || '').filter(Boolean));
+}
+
+// Headers that carry no user setting worth preserving when a draft is rewritten
+const IGNORED_X_HEADERS = new Set(['x-priority', 'x-msmail-priority', 'x-mailer', 'x-original-to']);
+
+/**
+ * Reply-To, priority, read receipt and custom X- headers of a stored draft
+ */
+function draftExtras(parsed: ParsedMail): MessageExtras {
+  const extras: MessageExtras = {};
+  const replyTo = parsed.replyTo?.value?.[0]?.address;
+  if (replyTo) extras.replyTo = replyTo;
+
+  // mailparser folds X-Priority/Importance into a single "priority" header (high, normal or low)
+  const priority = parsed.headers.get('priority');
+  if (priority === 'high' || priority === 'low') extras.priority = priority;
+
+  if (parsed.headers.has('disposition-notification-to')) extras.readReceipt = true;
+
+  const headers: Record<string, string> = {};
+  for (const [key, value] of parsed.headers) {
+    if (key.startsWith('x-') && !IGNORED_X_HEADERS.has(key) && typeof value === 'string' && !/[\r\n]/.test(value)) {
+      headers[key.replace(/(^|-)([a-z])/g, (_, dash, letter) => dash + letter.toUpperCase())] = value;
+    }
+  }
+  if (Object.keys(headers).length > 0) extras.headers = headers;
+  return extras;
 }
 
 async function loadDraft(account: EmailAccount, folder: string, emailId: string): Promise<{ parsed: ParsedMail; fields: DraftFields }> {
@@ -121,7 +150,8 @@ async function loadDraft(account: EmailAccount, folder: string, emailId: string)
     fromEmail: addresses(parsed.from)[0],
     inReplyTo: parsed.inReplyTo,
     references,
-    messageId: parsed.messageId
+    messageId: parsed.messageId,
+    ...draftExtras(parsed)
   };
   return { parsed, fields };
 }
@@ -179,7 +209,8 @@ export async function sendDraft(
     fromName: account.default_from_name,
     fromEmail: fields.fromEmail,
     inReplyTo: fields.inReplyTo,
-    references: fields.references
+    references: fields.references,
+    extras: { replyTo: fields.replyTo, priority: fields.priority, readReceipt: fields.readReceipt, headers: fields.headers }
   });
 
   let draftRemoved = false;

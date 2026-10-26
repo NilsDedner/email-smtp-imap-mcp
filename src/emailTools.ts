@@ -70,6 +70,14 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
               type: "boolean",
               description: "Filter drafts"
             },
+            keyword: {
+              type: "string",
+              description: "Only emails carrying this custom keyword (see keywords in results, add_keywords in emails_modify)"
+            },
+            no_keyword: {
+              type: "string",
+              description: "Only emails without this custom keyword"
+            },
             cc: {
               type: "string",
               description: "Filter by CC address"
@@ -169,6 +177,16 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
           type: "number",
           description: "With filters/query: the number of matches reported by dry_run. The call is refused if the count differs."
         },
+        add_keywords: {
+          type: "array",
+          items: { type: "string" },
+          description: "Add custom IMAP keywords (labels such as 'Invoice' or '$Followup'; letters, digits, _ . $ -). Whether the server stores them permanently depends on the provider."
+        },
+        remove_keywords: {
+          type: "array",
+          items: { type: "string" },
+          description: "Remove custom IMAP keywords"
+        },
         mark_spam: {
           type: "boolean",
           description: "Report as spam: flag $Junk and move to the Junk/Spam folder"
@@ -264,6 +282,24 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
           type: "array",
           items: { type: "string" },
           description: "Array of BCC recipient email addresses"
+        },
+        reply_to: {
+          type: "string",
+          description: "Address replies should go to (Reply-To header)"
+        },
+        priority: {
+          type: "string",
+          enum: ["high", "normal", "low"],
+          description: "Message priority (X-Priority/Importance headers)"
+        },
+        read_receipt: {
+          type: "boolean",
+          description: "Ask the recipient's client for a read receipt (Disposition-Notification-To the sender)"
+        },
+        headers: {
+          type: "object",
+          additionalProperties: { type: "string" },
+          description: "Custom headers as name/value pairs, e.g. {\"X-Ticket\": \"4711\"}. Standard headers such as From or Subject cannot be set."
         },
         attachments: {
           type: "array",
@@ -398,6 +434,24 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
         },
         cc: { type: "array", items: { type: "string" }, description: "Array of CC recipient email addresses" },
         bcc: { type: "array", items: { type: "string" }, description: "Array of BCC recipient email addresses" },
+        reply_to: {
+          type: "string",
+          description: "Address replies should go to (Reply-To header)"
+        },
+        priority: {
+          type: "string",
+          enum: ["high", "normal", "low"],
+          description: "Message priority (X-Priority/Importance headers)"
+        },
+        read_receipt: {
+          type: "boolean",
+          description: "Ask the recipient's client for a read receipt (Disposition-Notification-To the sender)"
+        },
+        headers: {
+          type: "object",
+          additionalProperties: { type: "string" },
+          description: "Custom headers as name/value pairs, e.g. {\"X-Ticket\": \"4711\"}. Standard headers such as From or Subject cannot be set."
+        },
         attachments: {
           type: "array",
           items: {
@@ -455,6 +509,24 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
         body: { type: "string", description: "New body" },
         body_type: { type: "string", enum: ["plain", "html"], description: "Format of the new body" },
         from_email: { type: "string", description: "New sender address (must be allowed for the account)" },
+        reply_to: {
+          type: "string",
+          description: "Address replies should go to (Reply-To header)"
+        },
+        priority: {
+          type: "string",
+          enum: ["high", "normal", "low"],
+          description: "Message priority (X-Priority/Importance headers)"
+        },
+        read_receipt: {
+          type: "boolean",
+          description: "Ask the recipient's client for a read receipt (Disposition-Notification-To the sender)"
+        },
+        headers: {
+          type: "object",
+          additionalProperties: { type: "string" },
+          description: "Replaces all custom headers; {} removes them. Name/value pairs, e.g. {\"X-Ticket\": \"4711\"}. Standard headers such as From or Subject cannot be set."
+        },
         attachments: {
           type: "array",
           items: {
