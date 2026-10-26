@@ -25,10 +25,10 @@
     "test:live": "npm run build && node --test --test-concurrency=1 --test-timeout=600000 test/live/*.test.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "dotenv": "^17.4.2",
     "imapflow": "^1.6.6",
-    "mailparser": "^3.9.15",
+    "mailparser": "^3.12.4",
     "nodemailer": "^9.0.5"
   },
   "devDependencies": {
