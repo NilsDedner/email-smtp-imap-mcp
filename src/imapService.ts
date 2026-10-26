@@ -441,6 +441,8 @@ export async function createFolder(account: EmailAccount, path: string): Promise
   try {
     const result = await withTimeout(client.mailboxCreate(path), 30000, 'Creating folder timed out');
     if (!result.created) throw new Error(`Folder already exists: ${result.path}`);
+    // Clients that only show subscribed folders would hide it otherwise
+    await client.mailboxSubscribe(result.path).catch(() => {});
     return result.path;
   } finally {
     await client.logout().catch(() => {});
@@ -462,6 +464,9 @@ export async function renameFolder(account: EmailAccount, path: string, newPath:
     if (match.specialUse) throw new Error(`Folder ${path} is a special-use folder (${match.specialUse}) and cannot be renamed`);
     if (folders.some((folder) => folder.path === newPath)) throw new Error(`Folder already exists: ${newPath}`);
     const result = await withTimeout(client.mailboxRename(path, newPath), 30000, 'Renaming folder timed out');
+    // Servers keep the subscription under the old name: move it so the folder neither vanishes nor lingers in clients
+    await client.mailboxUnsubscribe(path).catch(() => {});
+    await client.mailboxSubscribe(result.newPath).catch(() => {});
     return { from: result.path, to: result.newPath };
   } finally {
     await client.logout().catch(() => {});
@@ -478,8 +483,15 @@ export async function deleteFolder(account: EmailAccount, path: string): Promise
     const match = (await client.list()).find((folder) => folder.path === path);
     if (!match) throw new Error(`Folder not found: ${path}`);
     if (match.specialUse) throw new Error(`Folder ${path} is a special-use folder (${match.specialUse}) and cannot be deleted`);
-    const result = await withTimeout(client.mailboxDelete(path), 30000, 'Deleting folder timed out');
-    return result.path;
+    // A leftover subscription makes clients keep showing a deleted folder
+    await client.mailboxUnsubscribe(path).catch(() => {});
+    try {
+      const result = await withTimeout(client.mailboxDelete(path), 30000, 'Deleting folder timed out');
+      return result.path;
+    } catch (error) {
+      await client.mailboxSubscribe(path).catch(() => {});
+      throw error;
+    }
   } finally {
     await client.logout().catch(() => {});
   }

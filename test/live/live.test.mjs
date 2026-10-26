@@ -118,10 +118,14 @@ after(async () => {
         const dry = await call('emails_modify', { ...selection, dry_run: true });
         if (dry.matched > 0) await call('emails_modify', { ...selection, delete: true, permanent: true, expected_count: dry.matched });
       }
-      for (const folder of folders.filter((f) => f.path === FOLDER || f.path.startsWith(`${FOLDER}/`) || f.path.startsWith(`${FOLDER}.`))
-        .sort((x, y) => y.path.length - x.path.length)) {
-        await call('folder_delete', { account_name: accountName, name: folder.path });
+      const mine = (f) => f.path === FOLDER || f.path.startsWith(`${FOLDER}/`) || f.path.startsWith(`${FOLDER}.`);
+      for (const folder of folders.filter(mine).sort((x, y) => y.path.length - x.path.length)) {
+        const result = await call('folder_delete', { account_name: accountName, name: folder.path });
+        if (!result.success) console.error(`Could not delete test folder ${folder.path}: ${result.error}`);
       }
+      const remaining = ((await call('folders_list', { account_name: accountName })).folders || []).filter(mine);
+      for (const folder of remaining) findings.push(`LEFTOVER folder ${folder.path} (account ${accountName}, subscribed=${folder.subscribed}); delete it by hand`);
+      if (remaining.length === 0) findings.push(`ok   test folders removed (account ${accountName})`);
     } catch (error) {
       console.error(`Cleanup for account ${accountName} failed: ${error.message}`);
     }
