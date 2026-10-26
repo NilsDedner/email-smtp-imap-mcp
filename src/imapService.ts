@@ -339,19 +339,64 @@ export async function deleteFolder(account: EmailAccount, path: string): Promise
 }
 
 /**
+ * Folder for drafts: the one flagged \\Drafts, else "Drafts"
+ */
+export async function resolveDraftsFolder(account: EmailAccount): Promise<string> {
+  const client = await createImapConnection(account);
+  try {
+    return resolveSpecialFolder(await client.list(), '\\Drafts', 'Drafts');
+  } finally {
+    await client.logout().catch(() => {});
+  }
+}
+
+/**
  * Store a raw RFC 822 message as a draft (flagged \\Draft, marked read).
- * Returns the folder path and, when the server reports it, the new UID.
+ * Returns the folder path and the new UID. Servers without UIDPLUS do not report
+ * the UID on append, so it is looked up by Message-ID in that case.
  */
 export async function appendDraft(
   account: EmailAccount,
   raw: Buffer,
-  folder?: string
+  folder?: string,
+  messageId?: string
 ): Promise<{ folder: string; uid?: number }> {
   const client = await createImapConnection(account);
   try {
     const target = folder || resolveSpecialFolder(await client.list(), '\\Drafts', 'Drafts');
     const result = await withTimeout(client.append(target, raw, ['\\Draft', '\\Seen']), 30000, 'Saving draft timed out');
-    return { folder: target, uid: result ? result.uid : undefined };
+    let uid: number | undefined = result ? result.uid : undefined;
+    if (uid === undefined && messageId) {
+      const lock = await client.getMailboxLock(target);
+      try {
+        const found = await client.search({ header: { 'message-id': messageId } }, { uid: true });
+        uid = found && found.length ? Math.max(...found) : undefined;
+      } finally {
+        lock.release();
+      }
+    }
+    return { folder: target, uid };
+  } finally {
+    await client.logout().catch(() => {});
+  }
+}
+
+/**
+ * Fetch the raw RFC 822 source of one message
+ */
+export async function fetchRawMessage(
+  account: EmailAccount,
+  folder: string,
+  emailId: string
+): Promise<Buffer | null> {
+  if (!/^\d+$/.test(emailId) || Number(emailId) < 1) {
+    throw new Error(`Invalid email ID: ${emailId}`);
+  }
+  const client = await createImapConnection(account);
+  try {
+    await client.mailboxOpen(folder, { readOnly: true });
+    const message = await client.fetchOne(emailId, { uid: true, source: true }, { uid: true });
+    return message && message.source ? message.source : null;
   } finally {
     await client.logout().catch(() => {});
   }

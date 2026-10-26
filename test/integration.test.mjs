@@ -197,6 +197,9 @@ test('read_only accounts can read but not change anything', { skip }, async () =
     ['email_send', { to: ['alice@example.test'], subject: 's', body: 'b' }],
     ['email_respond', { email_id: String(uid), body: 'b' }],
     ['draft_create', { subject: 's', body: 'b' }],
+    ['draft_update', { email_id: String(uid), subject: 's' }],
+    ['draft_send', { email_id: String(uid) }],
+    ['draft_delete', { email_ids: [String(uid)] }],
     ['emails_modify', { email_ids: [String(uid)], mark_read: true }],
     ['emails_modify', { email_ids: [String(uid)], delete: true }],
     ['folder_create', { name: 'Nope' }],
@@ -281,4 +284,105 @@ test('email_respond works from any folder and flags the original', { skip }, asy
 
   const wrongFolder = await call('email_respond', { email_id: String(uid), body: 'x' });
   assert.equal(wrongFolder.success, false);
+});
+
+test('draft_update rewrites a draft and keeps what was not changed', { skip }, async () => {
+  const created = await call('draft_create', {
+    to: ['bob@example.test'],
+    cc: ['carol@example.test'],
+    subject: 'Plan',
+    body: 'First version',
+    body_type: 'plain',
+    attachments: [{ filename: 'a.txt', content: Buffer.from('keep').toString('base64'), content_type: 'text/plain' }]
+  });
+
+  const updated = await call('draft_update', { email_id: created.email_id, body: 'Second version', cc: [] });
+  assert.equal(updated.success, true);
+  assert.equal(updated.previous_email_id, created.email_id);
+  assert.notEqual(updated.email_id, created.email_id);
+
+  const drafts = await env.messages('alice', 'Drafts');
+  assert.equal(drafts.length, 1, 'old copy must be gone');
+  const [draft] = drafts;
+  assert.ok(draft.flags.has('\\Draft'));
+  assert.equal(draft.subject, 'Plan');
+  assert.match(draft.parsed.text, /Second version/);
+  assert.equal(draft.parsed.to.value[0].address, 'bob@example.test');
+  assert.equal(draft.parsed.cc, undefined);
+  assert.equal(draft.parsed.attachments[0].filename, 'a.txt');
+  assert.equal(String(draft.uid), updated.email_id);
+
+  assert.equal((await call('draft_update', { email_id: updated.email_id })).success, false);
+  assert.equal((await call('draft_update', { email_id: '9999', subject: 'x' })).success, false);
+});
+
+test('draft_send delivers the draft, keeps Bcc private and removes it', { skip }, async () => {
+  const draft = await call('draft_create', {
+    to: ['bob@example.test'],
+    bcc: ['alice@example.test'],
+    subject: 'Ready to go',
+    body: '<p>Hello</p>',
+    attachments: [{ filename: 'doc.txt', content: Buffer.from('payload').toString('base64'), content_type: 'text/plain' }]
+  });
+
+  const sent = await call('draft_send', { email_id: draft.email_id });
+  assert.equal(sent.success, true);
+  assert.equal(sent.draft_removed, true);
+  assert.equal(sent.sent_copy.saved, true);
+
+  assert.deepEqual(await env.messages('alice', 'Drafts'), []);
+  const received = (await env.messages('bob')).find((m) => m.subject === 'Ready to go');
+  assert.ok(received);
+  assert.equal(received.parsed.attachments[0].filename, 'doc.txt');
+  assert.equal(received.parsed.headers.get('bcc'), undefined, 'Bcc header must not reach recipients');
+  assert.equal((await env.messages('alice', 'Sent')).length, 1);
+
+  const noRecipient = await call('draft_create', { subject: 'Nobody', body: 'x', body_type: 'plain' });
+  const refused = await call('draft_send', { email_id: noRecipient.email_id });
+  assert.equal(refused.success, false);
+  assert.match(refused.error, /no "to" recipients/);
+  assert.equal((await env.messages('alice', 'Drafts')).length, 1);
+});
+
+test('draft_create as a reply threads onto the original', { skip }, async () => {
+  const uid = await env.seed('alice', { folder: 'Trash', subject: 'Budget?', from: 'Bob <bob@example.test>', body: 'Numbers please' });
+
+  const draft = await call('draft_create', { reply_to_email_id: String(uid), reply_to_folder: 'Trash', body: 'Attached soon.', body_type: 'plain' });
+  assert.equal(draft.success, true);
+
+  const [stored] = await env.messages('alice', 'Drafts');
+  assert.equal(stored.subject, 'Re: Budget?');
+  assert.equal(stored.parsed.to.value[0].address, 'bob@example.test');
+  assert.ok(stored.parsed.inReplyTo);
+  assert.match(stored.parsed.text, /Attached soon\./);
+  assert.match(stored.parsed.text, /Numbers please/);
+
+  const sent = await call('draft_send', { email_id: draft.email_id });
+  assert.equal(sent.success, true);
+  const [received] = await env.messages('bob');
+  assert.equal(received.parsed.inReplyTo, stored.parsed.inReplyTo);
+
+  const missing = await call('draft_create', { reply_to_email_id: '9999', body: 'x' });
+  assert.equal(missing.success, false);
+  const stray = await call('draft_create', { subject: 's', body: 'x', reply_all: true });
+  assert.equal(stray.success, false);
+});
+
+test('draft_delete moves to Trash, permanent needs the permission', { skip }, async () => {
+  const a = await call('draft_create', { subject: 'A', body: 'x', body_type: 'plain' });
+  const b = await call('draft_create', { subject: 'B', body: 'x', body_type: 'plain' });
+
+  const soft = await call('draft_delete', { email_ids: [a.email_id] });
+  assert.equal(soft.success, true);
+  assert.equal(soft.deleted_to, 'Trash');
+  assert.deepEqual((await env.messages('alice', 'Trash')).map((m) => m.subject), ['A']);
+
+  const locked = await call('draft_delete', { account_name: 'alice_safe', email_ids: [b.email_id], permanent: true });
+  assert.equal(locked.success, false);
+  assert.match(locked.error, /ALLOW_PERMANENT_DELETE/);
+  assert.equal((await env.messages('alice', 'Drafts')).length, 1);
+
+  const hard = await call('draft_delete', { email_ids: [b.email_id], permanent: true });
+  assert.equal(hard.success, true);
+  assert.deepEqual(await env.messages('alice', 'Drafts'), []);
 });

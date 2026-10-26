@@ -3,8 +3,9 @@
  */
 
 import { getAccount, loadAccounts } from './accountManager.js';
-import { searchEmails, modifyEmails, listFolders, createFolder, deleteFolder } from './imapService.js';
-import { sendEmail, replyToEmail, forwardEmail, createDraft } from './smtpService.js';
+import { searchEmails, modifyEmails, listFolders, createFolder, deleteFolder, resolveDraftsFolder } from './imapService.js';
+import { sendEmail, replyToEmail, forwardEmail } from './smtpService.js';
+import { createDraft, updateDraft, sendDraft } from './draftService.js';
 import { EmailAccount, EmailFilters } from './types.js';
 
 function requireString(value: unknown, fieldName: string): string {
@@ -375,12 +376,18 @@ export async function handleDraftCreate(args: any): Promise<string> {
     const { name, config } = getAccount(args.account_name);
 
     assertWritable(config, 'draft_create');
-    const subject = requireString(args.subject, 'subject');
+    const replyToEmailId = validateOptionalString(args.reply_to_email_id, 'reply_to_email_id');
+    const subject = replyToEmailId ? validateOptionalString(args.subject, 'subject') : requireString(args.subject, 'subject');
     const body = requireString(args.body, 'body');
     const to = validateOptionalStringArray(args.to, 'to');
     const cc = validateOptionalStringArray(args.cc, 'cc');
     const bcc = validateOptionalStringArray(args.bcc, 'bcc');
     const attachments = validateAttachments(args.attachments, 'attachments');
+    validateOptionalBoolean(args.reply_all, 'reply_all');
+    validateOptionalBoolean(args.include_original, 'include_original');
+    if (!replyToEmailId && (args.reply_to_folder !== undefined || args.reply_all !== undefined)) {
+      throw new Error('reply_to_folder and reply_all require reply_to_email_id');
+    }
 
     const result = await createDraft(config, {
       to,
@@ -392,7 +399,15 @@ export async function handleDraftCreate(args: any): Promise<string> {
       attachments,
       fromName: config.default_from_name,
       fromEmail: validateOptionalString(args.from_email, 'from_email'),
-      folder: validateOptionalString(args.folder, 'folder')
+      folder: validateOptionalString(args.folder, 'folder'),
+      replyTo: replyToEmailId
+        ? {
+            emailId: replyToEmailId,
+            folder: validateOptionalString(args.reply_to_folder, 'reply_to_folder'),
+            replyAll: args.reply_all === true,
+            includeOriginal: args.include_original !== false
+          }
+        : undefined
     });
 
     return JSON.stringify({
@@ -400,13 +415,123 @@ export async function handleDraftCreate(args: any): Promise<string> {
       account: name,
       folder: result.folder,
       ...(result.uid !== undefined ? { email_id: String(result.uid) } : {}),
-      subject
+      ...(subject ? { subject } : {})
     }, null, 2);
 
   } catch (error: any) {
     return JSON.stringify({
       success: false,
       error: error.message || 'Failed to create draft'
+    }, null, 2);
+  }
+}
+
+function requireUid(value: unknown, fieldName: string): string {
+  const id = requireString(value, fieldName);
+  if (!/^\d+$/.test(id) || Number(id) < 1) throw new Error(`${fieldName} must be a positive numeric UID`);
+  return id;
+}
+
+/**
+ * Handle draft_update tool
+ */
+export async function handleDraftUpdate(args: any): Promise<string> {
+  try {
+    args = args || {};
+    const { name, config } = getAccount(args.account_name);
+
+    assertWritable(config, 'draft_update');
+    const emailId = requireUid(args.email_id, 'email_id');
+    const changes = {
+      to: validateOptionalStringArray(args.to, 'to'),
+      cc: validateOptionalStringArray(args.cc, 'cc'),
+      bcc: validateOptionalStringArray(args.bcc, 'bcc'),
+      subject: validateOptionalString(args.subject, 'subject'),
+      body: validateOptionalString(args.body, 'body'),
+      bodyType: args.body_type === undefined ? undefined : validateBodyType(args.body_type),
+      attachments: validateAttachments(args.attachments, 'attachments'),
+      fromEmail: validateOptionalString(args.from_email, 'from_email')
+    };
+    if (Object.values(changes).every((value) => value === undefined)) throw new Error('At least one field to change is required');
+
+    const result = await updateDraft(config, emailId, changes, validateOptionalString(args.folder, 'folder'));
+
+    return JSON.stringify({
+      success: true,
+      account: name,
+      folder: result.folder,
+      previous_email_id: emailId,
+      ...(result.uid !== undefined ? { email_id: String(result.uid) } : {})
+    }, null, 2);
+
+  } catch (error: any) {
+    return JSON.stringify({
+      success: false,
+      error: error.message || 'Failed to update draft'
+    }, null, 2);
+  }
+}
+
+/**
+ * Handle draft_send tool
+ */
+export async function handleDraftSend(args: any): Promise<string> {
+  try {
+    args = args || {};
+    const { name, config } = getAccount(args.account_name);
+
+    assertWritable(config, 'draft_send');
+    const emailId = requireUid(args.email_id, 'email_id');
+    const result = await sendDraft(config, emailId, validateOptionalString(args.folder, 'folder'));
+
+    return JSON.stringify({
+      success: result.success,
+      account: name,
+      message_id: result.messageId,
+      ...(result.sent_copy ? { sent_copy: result.sent_copy } : {}),
+      draft_removed: result.draft_removed
+    }, null, 2);
+
+  } catch (error: any) {
+    return JSON.stringify({
+      success: false,
+      error: error.message || 'Failed to send draft'
+    }, null, 2);
+  }
+}
+
+/**
+ * Handle draft_delete tool
+ */
+export async function handleDraftDelete(args: any): Promise<string> {
+  try {
+    args = args || {};
+    const { name, config } = getAccount(args.account_name);
+
+    const emailIds = requireStringArray(args.email_ids, 'email_ids');
+    if (emailIds.some((id) => !/^\d+$/.test(id) || Number(id) < 1)) {
+      throw new Error('email_ids entries must be positive numeric UIDs');
+    }
+    const permanent = validateOptionalBoolean(args.permanent, 'permanent') === true;
+    assertDeleteAllowed(config, permanent, 'draft_delete');
+
+    const folder = validateOptionalString(args.folder, 'folder') || await resolveDraftsFolder(config);
+    const result = await modifyEmails(config, emailIds, { delete: true, permanent, folder });
+
+    return JSON.stringify({
+      success: result.success,
+      account: name,
+      folder,
+      deleted: result.modified,
+      total: emailIds.length,
+      ...(result.deleted_to ? { deleted_to: result.deleted_to } : {}),
+      errors: result.errors
+    }, null, 2);
+
+  } catch (error: any) {
+    return JSON.stringify({
+      success: false,
+      error: error.message || 'Failed to delete draft'
     }, null, 2);
   }
 }

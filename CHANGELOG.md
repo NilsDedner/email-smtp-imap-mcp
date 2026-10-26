@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- `draft_update`, `draft_send` and `draft_delete` complete the draft workflow; `draft_create` can answer an existing message with `reply_to_email_id`.
 - `email_respond` accepts a `folder` and flags the original `\Answered` (reply) or `$Forwarded` (forward); the result reports `original_flagged`.
 - Per-account safety switches `READ_ONLY`, `ALLOW_DELETE` and `ALLOW_PERMANENT_DELETE`; `accounts_list` reports them.
 - `draft_create` saves drafts to the IMAP Drafts folder without sending.

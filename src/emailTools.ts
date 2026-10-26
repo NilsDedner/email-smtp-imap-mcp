@@ -327,9 +327,91 @@ export const EMAIL_TOOLS: Record<string, Tool> = {
         folder: {
           type: "string",
           description: "Folder to store the draft in. Defaults to the folder flagged \\Drafts, else 'Drafts'."
+        },
+        reply_to_email_id: {
+          type: "string",
+          description: "Make the draft a reply to this email (ID from emails_find): fills in recipient, 'Re:' subject, threading headers and the quoted original. subject becomes optional, 'to' overrides the recipients."
+        },
+        reply_to_folder: {
+          type: "string",
+          default: "INBOX",
+          description: "Folder of the email in reply_to_email_id"
+        },
+        reply_all: {
+          type: "boolean",
+          default: false,
+          description: "With reply_to_email_id: address all original recipients"
+        },
+        include_original: {
+          type: "boolean",
+          default: true,
+          description: "With reply_to_email_id: quote the original message below the body"
         }
       },
-      required: ["subject", "body"]
+      required: ["body"]
+    }
+  },
+
+  "draft_update": {
+    name: "draft_update",
+    description: "Change an existing draft. Only the fields you pass are changed; pass an empty array to clear to/cc/bcc/attachments. The draft is rewritten as a new message, so its email_id changes: use the returned email_id afterwards.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account_name: { type: "string", description: "Name of the email account to use" },
+        email_id: { type: "string", description: "ID of the draft (from draft_create or emails_find with folder 'Drafts')" },
+        folder: { type: "string", description: "Folder containing the draft. Defaults to the Drafts folder." },
+        to: { type: "array", items: { type: "string" }, description: "New recipients" },
+        cc: { type: "array", items: { type: "string" }, description: "New CC recipients" },
+        bcc: { type: "array", items: { type: "string" }, description: "New BCC recipients" },
+        subject: { type: "string", description: "New subject" },
+        body: { type: "string", description: "New body" },
+        body_type: { type: "string", enum: ["plain", "html"], description: "Format of the new body" },
+        from_email: { type: "string", description: "New sender address (must be allowed for the account)" },
+        attachments: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              filename: { type: "string" },
+              content: { type: "string", description: "Base64 encoded file content" },
+              content_type: { type: "string" }
+            },
+            required: ["filename", "content"]
+          },
+          description: "Replaces all attachments of the draft"
+        }
+      },
+      required: ["email_id"]
+    }
+  },
+
+  "draft_send": {
+    name: "draft_send",
+    description: "Send an existing draft and remove it from the Drafts folder. The draft needs at least one 'to' recipient.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account_name: { type: "string", description: "Name of the email account to use" },
+        email_id: { type: "string", description: "ID of the draft to send" },
+        folder: { type: "string", description: "Folder containing the draft. Defaults to the Drafts folder." }
+      },
+      required: ["email_id"]
+    }
+  },
+
+  "draft_delete": {
+    name: "draft_delete",
+    description: "Delete drafts. They are moved to the Trash folder unless permanent is true, which cannot be undone.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account_name: { type: "string", description: "Name of the email account to use" },
+        email_ids: { type: "array", items: { type: "string" }, description: "IDs of the drafts to delete" },
+        folder: { type: "string", description: "Folder containing the drafts. Defaults to the Drafts folder." },
+        permanent: { type: "boolean", description: "Remove permanently instead of moving to Trash" }
+      },
+      required: ["email_ids"]
     }
   },
 

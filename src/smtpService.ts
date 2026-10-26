@@ -6,7 +6,7 @@ import nodemailer from 'nodemailer';
 import MailComposer from 'nodemailer/lib/mail-composer/index.js';
 import { randomUUID } from 'node:crypto';
 import { EmailAccount, EmailAttachment, EmailMessage } from './types.js';
-import { appendDraft, appendToSentFolder, flagMessage, getEmailById } from './imapService.js';
+import { appendToSentFolder, flagMessage, getEmailById } from './imapService.js';
 
 export interface SentCopyResult {
   saved: boolean;
@@ -185,46 +185,6 @@ async function saveSentCopy(account: EmailAccount, mailOptions: any): Promise<Se
   } catch (error: any) {
     return { saved: false, error: error.message || String(error) };
   }
-}
-
-/**
- * Save a message as a draft in the IMAP Drafts folder instead of sending it
- */
-export async function createDraft(
-  account: EmailAccount,
-  options: {
-    to?: string[];
-    subject: string;
-    body: string;
-    bodyType?: 'plain' | 'html';
-    cc?: string[];
-    bcc?: string[];
-    attachments?: EmailAttachment[];
-    fromName?: string;
-    fromEmail?: string;
-    folder?: string;
-  }
-): Promise<{ folder: string; uid?: number }> {
-  const fromEmail = resolveFromEmail(account, options.fromEmail);
-  const mailOptions: any = {
-    from: options.fromName ? `"${options.fromName}" <${fromEmail}>` : fromEmail,
-    subject: options.subject,
-    messageId: `<${randomUUID()}@${fromEmail.split('@')[1] || 'localhost'}>`,
-    date: new Date()
-  };
-  if (options.to?.length) mailOptions.to = options.to.join(', ');
-  if (options.cc?.length) mailOptions.cc = options.cc.join(', ');
-  if (options.bcc?.length) mailOptions.bcc = options.bcc.join(', ');
-  if (options.bodyType === 'plain') mailOptions.text = options.body;
-  else mailOptions.html = options.body;
-  if (options.attachments?.length) {
-    mailOptions.attachments = options.attachments.map(att => ({
-      filename: att.filename,
-      content: Buffer.from(att.content, 'base64'),
-      contentType: att.content_type
-    }));
-  }
-  return appendDraft(account, await buildSentCopy(mailOptions), options.folder);
 }
 
 /**

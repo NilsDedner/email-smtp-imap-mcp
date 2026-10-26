@@ -20,6 +20,9 @@ import {
   handleEmailRespond,
   handleFoldersList,
   handleDraftCreate,
+  handleDraftUpdate,
+  handleDraftSend,
+  handleDraftDelete,
   handleFolderCreate,
   handleFolderDelete
 } from "./emailHandlers.js";
@@ -112,6 +115,18 @@ async function runServer() {
 
           case "draft_create":
             result = await handleDraftCreate(args);
+            break;
+
+          case "draft_update":
+            result = await handleDraftUpdate(args);
+            break;
+
+          case "draft_send":
+            result = await handleDraftSend(args);
+            break;
+
+          case "draft_delete":
+            result = await handleDraftDelete(args);
             break;
 
           case "folder_create":
