@@ -71,7 +71,7 @@ jobs:
         # GitHub OIDC signs provenance independently of the registry authentication method.
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish release-artifacts/email-smtp-imap-mcp-*.tgz --access public --provenance --ignore-scripts
+        run: npm publish ./release-artifacts/email-smtp-imap-mcp-*.tgz --access public --provenance --ignore-scripts
       - name: Verify npm registry received the inspected bytes
         run: |
           node --input-type=module -e 'import {readFileSync} from "node:fs"; import {execFileSync} from "node:child_process"; const p=JSON.parse(readFileSync("package.json")); const expected=JSON.parse(readFileSync("release-artifacts/package-files.json")).integrity; const actual=JSON.parse(execFileSync("npm",["view",`${p.name}@${p.version}`,"dist.integrity","--json"],{encoding:"utf8"})); if(actual!==expected) throw new Error("Registry tarball integrity mismatch"); console.log(`${p.name}@${p.version}: registry integrity verified`);'
