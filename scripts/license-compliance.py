@@ -8,6 +8,7 @@ import io
 import json
 from pathlib import Path, PurePosixPath
 import re
+import socket
 import subprocess
 import tarfile
 import urllib.request
@@ -31,12 +32,12 @@ def digest(data):
 
 
 def download_release():
-    with urllib.request.urlopen("https://github.com/samihalawa/email-smtp-imap-mcp/releases/download/v2.2.2/release-assurance.tgz", timeout=120) as response:
+    with urllib.request.urlopen("https://github.com/samihalawa/email-smtp-imap-mcp/releases/download/v2.2.2/release-assurance.tgz") as response:
         return response.read()
 
 
 def download_upstream_license():
-    with urllib.request.urlopen("https://raw.githubusercontent.com/medialize/URI.js/28976cde5bb32a433ab78c4a32ef58f39d2cabf6/LICENSE.txt", timeout=120) as response:
+    with urllib.request.urlopen("https://raw.githubusercontent.com/medialize/URI.js/28976cde5bb32a433ab78c4a32ef58f39d2cabf6/LICENSE.txt") as response:
         return response.read()
 
 
@@ -138,6 +139,7 @@ def generate():
 
 
 if __name__ == "__main__":
+    socket.setdefaulttimeout(120)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Verify committed supplement instead of writing it")
     parser.add_argument("--package", action="store_true", help="Create the deterministic release supplement after verification")
