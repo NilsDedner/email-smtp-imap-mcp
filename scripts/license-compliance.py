@@ -30,8 +30,13 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def download(url):
-    with urllib.request.urlopen(url, timeout=120) as response:
+def download_release():
+    with urllib.request.urlopen("https://github.com/samihalawa/email-smtp-imap-mcp/releases/download/v2.2.2/release-assurance.tgz", timeout=120) as response:
+        return response.read()
+
+
+def download_upstream_license():
+    with urllib.request.urlopen("https://raw.githubusercontent.com/medialize/URI.js/28976cde5bb32a433ab78c4a32ef58f39d2cabf6/LICENSE.txt", timeout=120) as response:
         return response.read()
 
 
@@ -42,7 +47,7 @@ def unpack(data):
 
 
 def generate():
-    raw = download(URL)
+    raw = download_release()
     assert digest(raw) == BUNDLE_HASH, "Release archive digest changed"
     files = unpack(raw)
     checksums = json.loads(files["checksums.json"])
@@ -105,7 +110,7 @@ def generate():
     # Recover the named author's identity from the actual mit-license service repository;
     # retain the upstream URI.js grant and the additional source attribution without inventing dates.
     upstream = "https://raw.githubusercontent.com/medialize/URI.js/28976cde5bb32a433ab78c4a32ef58f39d2cabf6/LICENSE.txt"
-    uri_license = download(upstream).decode()
+    uri_license = download_upstream_license().decode()
     assert "Copyright (c) 2011 Rodney Rehm" in uri_license
     text_id = digest(uri_license.encode())
     texts[text_id] = uri_license
