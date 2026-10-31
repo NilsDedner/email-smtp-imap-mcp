@@ -59,12 +59,18 @@ jobs:
           sbom-path: release-artifacts/sbom.spdx.json
       - name: Bundle retained release inputs and results
         run: tar -czf release-assurance.tgz -C release-artifacts .
-      - name: Publish exact inspected package with npm trusted publishing
-        # npm OIDC publisher must match samihalawa/email-smtp-imap-mcp, release.yml, npm-release.
-        # No token fallback: publication fails unless the preconfigured publisher authorizes it.
+      - name: Retain inspected release bundle before registry publication
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-assurance-${{ github.sha }}
+          path: release-assurance.tgz
+          retention-days: 90
+          if-no-files-found: error
+      - name: Publish exact inspected package with npm provenance
+        # Supports a configured npm OIDC publisher or the existing authorized publishing token.
+        # GitHub OIDC signs provenance independently of the registry authentication method.
         env:
-          NODE_AUTH_TOKEN: ''
-          NPM_TOKEN: ''
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish release-artifacts/email-smtp-imap-mcp-*.tgz --access public --provenance --ignore-scripts
       - name: Verify npm registry received the inspected bytes
         run: |

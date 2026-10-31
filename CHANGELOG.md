@@ -5,7 +5,7 @@
 - Require validated TLS 1.2 or newer for SMTP and IMAP, including mandatory STARTTLS before authentication when implicit TLS is not selected.
 - Replace insecure TLS troubleshooting advice and add real encrypted-protocol, downgrade and invalid-certificate regression coverage.
 - Reuse the existing dependency security fixes from PR18 and update the remaining vulnerable Hono adapter dependency.
-- Add free static security analysis, source/component archives with offline recovery, and a manually dispatched npm OIDC/provenance release workflow.
+- Add free static security analysis, source/component archives with offline recovery, and a manually dispatched npm provenance release workflow with GitHub OIDC attestations.
 - Document the scoped OpenChain ISO/IEC 18974 security assurance programme and its source-bound review; no conformance or external certification claim is made.
 
 ## [2.2.0] - 2026-08-11
