@@ -24,6 +24,9 @@ function createTransporter(account: EmailAccount) {
     host: account.smtp_host,
     port: account.smtp_port,
     secure: account.smtp_secure,
+    // secure=false selects STARTTLS, never permission to send credentials in cleartext.
+    requireTLS: true,
+    tls: { minVersion: 'TLSv1.2', rejectUnauthorized: true },
     auth: {
       user: account.smtp_user,
       pass: account.smtp_pass
