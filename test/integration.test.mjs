@@ -909,12 +909,14 @@ test('emails_wait returns as soon as matching mail arrives', { skip }, async () 
 
   // Continue from next_uid: nothing new, then one more message
   const quiet = await call('emails_wait', { timeout_seconds: 1, since_uid: result.next_uid, filters: { from: 'wanted@example.test' } });
+  assert.equal(quiet.success, true, quiet.error);
   assert.equal(quiet.timed_out, true);
   assert.deepEqual(quiet.emails, []);
   const later = call('emails_wait', { timeout_seconds: 30, since_uid: result.next_uid, include_content: true });
   await sleep(500);
   await env.seed('alice', { subject: 'Second', from: 'wanted@example.test', body: 'second body' });
   const second = await later;
+  assert.equal(second.success, true, second.error);
   assert.deepEqual(second.emails.map((m) => m.subject), ['Second']);
   assert.match(second.emails[0].body, /second body/);
 });

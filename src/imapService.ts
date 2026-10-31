@@ -2,6 +2,7 @@
  * IMAP email operations
  */
 
+import { DEFAULT_CIPHERS } from 'node:tls';
 import { appendFileSync } from 'node:fs';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
@@ -51,7 +52,9 @@ async function connectImap(account: EmailAccount, pooled = false): Promise<ImapF
   const client = new ImapFlow({
     host: account.imap_host,
     port: account.imap_port || 993,
-    secure: account.imap_secure !== false, // Default to true
+    secure: account.imap_secure !== false, // Default to implicit TLS
+    doSTARTTLS: account.imap_secure === false ? true : undefined,
+    tls: { minVersion: 'TLSv1.2', rejectUnauthorized: true, minDHSize: 2048, ciphers: `${DEFAULT_CIPHERS}:@SECLEVEL=2` },
     auth: {
       user: account.imap_user,
       pass: account.imap_pass
@@ -80,7 +83,7 @@ async function connectImap(account: EmailAccount, pooled = false): Promise<ImapF
       throw new Error(`Connection timed out to ${account.imap_host}:${account.imap_port}. Check network/firewall.`);
     }
     if (message.includes('certificate') || message.includes('SSL') || message.includes('TLS')) {
-      throw new Error(`SSL/TLS error connecting to ${account.imap_host}. Try setting imap_secure to ${!account.imap_secure}.`);
+      throw new Error(`SSL/TLS error connecting to ${account.imap_host}. Check the provider TLS port, hostname and certificate chain; do not disable encryption or certificate validation.`);
     }
     if (message.includes('Invalid credentials') || message.includes('authentication') || message.includes('AUTH') || message.includes('login')) {
       throw new Error(`Authentication failed for ${account.imap_user}. Check username/password.`);
@@ -326,6 +329,11 @@ const WAIT_POLL_MS = 15000;
  * 15 seconds anyway so servers without IDLE work too. Returns as soon as a matching new message exists.
  */
 export async function waitForEmails(account: EmailAccount, options: WaitOptions): Promise<WaitResult> {
+  // Never hang longer than asked: a stuck connection must end the tool call, not the MCP client's patience
+  return withTimeout(waitForEmailsInternal(account, options), options.timeoutMs + 20000, 'Waiting for mail timed out; the connection did not answer');
+}
+
+async function waitForEmailsInternal(account: EmailAccount, options: WaitOptions): Promise<WaitResult> {
   const folder = options.folder || 'INBOX';
   const client = await connectImap(account); // own connection: it sits in IDLE for the whole wait
   try {
@@ -372,7 +380,8 @@ export async function waitForEmails(account: EmailAccount, options: WaitOptions)
     const nextUid = uids.length > 0 ? Math.max(...uids) + 1 : Math.max(startUid, client.mailbox ? (client.mailbox as any).uidNext : startUid);
     return { emails, timed_out: uids.length === 0, next_uid: nextUid };
   } finally {
-    await client.logout().catch(() => {});
+    // This connection is private to the call: if a polite logout stalls, just drop the socket
+    await withTimeout(client.logout(), 5000, 'Logout timed out').catch(() => client.close());
   }
 }
 

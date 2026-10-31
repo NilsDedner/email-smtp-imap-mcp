@@ -1,0 +1,22 @@
+rules:
+  - id: smtp-requires-validated-tls
+    languages: [typescript]
+    severity: ERROR
+    message: SMTP must require STARTTLS and validate server certificates with TLS 1.2 or newer.
+    patterns:
+      - pattern: nodemailer.createTransport({...})
+      - pattern-not: |
+          nodemailer.createTransport({..., requireTLS: true, tls: {minVersion: 'TLSv1.2', rejectUnauthorized: true, minDHSize: 2048, ciphers: $CIPHERS}, ...})
+  - id: imap-requires-validated-tls
+    languages: [typescript]
+    severity: ERROR
+    message: IMAP must explicitly configure STARTTLS policy and validated TLS 1.2 or newer.
+    patterns:
+      - pattern: new ImapFlow({...})
+      - pattern-not: |
+          new ImapFlow({..., doSTARTTLS: $POLICY, tls: {minVersion: 'TLSv1.2', rejectUnauthorized: true, minDHSize: 2048, ciphers: $CIPHERS}, ...})
+  - id: no-disabled-certificate-validation
+    languages: [typescript]
+    severity: ERROR
+    message: Do not disable server certificate validation.
+    pattern: '{..., rejectUnauthorized: false, ...}'

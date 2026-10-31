@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
+import { createServer as createTlsServer, TLSSocket } from 'node:tls';
+import { createServer as createNetServer } from 'node:net';
+import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -23,15 +25,20 @@ function close(server) {
   return new Promise((resolve) => server.close(resolve));
 }
 
-function createImapTestServer() {
+const testTls = {
+  key: readFileSync(new URL('./fixtures/localhost-key.pem', import.meta.url)),
+  cert: readFileSync(new URL('./fixtures/localhost-cert.pem', import.meta.url))
+};
+
+function createImapTestServer(starttls = false) {
   const commands = [];
-  const server = createServer((socket) => {
+  const onConnection = (socket) => {
     let buffer = '';
     let authenticationTag;
     socket.setEncoding('utf8');
     socket.write('* OK Local IMAP test server ready\r\n');
 
-    socket.on('data', (chunk) => {
+    socket.on('data', function handleData(chunk) {
       buffer += chunk;
       while (buffer.includes('\r\n')) {
         const lineEnd = buffer.indexOf('\r\n');
@@ -72,8 +79,16 @@ function createImapTestServer() {
           );
         };
 
-        if (command === 'CAPABILITY') {
-          socket.write(`* CAPABILITY IMAP4rev1 AUTH=PLAIN\r\n${tag} OK CAPABILITY completed\r\n`);
+        if (command === 'STARTTLS') {
+          socket.write(`${tag} OK Begin TLS\r\n`, () => {
+            socket.removeAllListeners('data');
+            socket = new TLSSocket(socket, { isServer: true, ...testTls });
+            socket.setEncoding('utf8');
+            socket.on('data', handleData);
+          });
+          return;
+        } else if (command === 'CAPABILITY') {
+          socket.write(`* CAPABILITY IMAP4rev1 ${socket.encrypted ? '' : 'STARTTLS '}AUTH=PLAIN\r\n${tag} OK CAPABILITY completed\r\n`);
         } else if (command === 'AUTHENTICATE') {
           authenticationTag = tag;
           socket.write('+ \r\n');
@@ -120,7 +135,8 @@ function createImapTestServer() {
         }
       }
     });
-  });
+  };
+  const server = starttls ? createNetServer(onConnection) : createTlsServer(testTls, onConnection);
 
   server.commands = commands;
   return server;
@@ -235,12 +251,12 @@ test('loads arbitrary account counts from a multiline .env file', async () => {
   }
 });
 
-test('runs send, find, modify, reply, and folder tools through local SMTP/IMAP protocols', async () => {
+for (const smtpImplicitTls of [false, true]) {
+test(`runs all email tools over ${smtpImplicitTls ? 'implicit SMTP / STARTTLS IMAP' : 'STARTTLS SMTP / implicit IMAP'}`, async () => {
   const receivedMessages = [];
   const smtpServer = new SMTPServer({
-    secure: false,
-    allowInsecureAuth: true,
-    disabledCommands: ['STARTTLS'],
+    secure: smtpImplicitTls,
+    ...testTls,
     onAuth(auth, _session, callback) {
       if (auth.username === 'local@example.test' && auth.password === 'smtp-password') {
         callback(null, { user: auth.username });
@@ -258,7 +274,7 @@ test('runs send, find, modify, reply, and folder tools through local SMTP/IMAP p
       });
     }
   });
-  const imapServer = createImapTestServer();
+  const imapServer = createImapTestServer(smtpImplicitTls);
   const smtpAddress = await listen(smtpServer);
   const imapAddress = await listen(imapServer);
   const workingDirectory = await mkdtemp(path.join(os.tmpdir(), 'email-mcp-protocol-'));
@@ -271,14 +287,14 @@ test('runs send, find, modify, reply, and folder tools through local SMTP/IMAP p
     smtp: {
       host: '127.0.0.1',
       port: smtpAddress.port,
-      secure: false,
+      secure: smtpImplicitTls,
       user: 'local@example.test',
       password: 'smtp-password'
     },
     imap: {
       host: '127.0.0.1',
       port: imapAddress.port,
-      secure: false,
+      secure: !smtpImplicitTls,
       user: 'local@example.test',
       password: 'imap-password'
     },
@@ -295,7 +311,8 @@ test('runs send, find, modify, reply, and folder tools through local SMTP/IMAP p
     cwd: runtimeDirectory,
     env: {
       PATH: process.env.PATH || '',
-      EMAIL_ENV_FILE: environmentFile
+      EMAIL_ENV_FILE: environmentFile,
+      NODE_EXTRA_CA_CERTS: path.resolve('test/fixtures/localhost-cert.pem')
     }
   });
   const client = new Client({ name: 'email-mcp-protocol-test', version: '1.0.0' });
@@ -374,3 +391,5 @@ test('runs send, find, modify, reply, and folder tools through local SMTP/IMAP p
     await rm(workingDirectory, { recursive: true, force: true });
   }
 });
+
+}

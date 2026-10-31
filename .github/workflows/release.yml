@@ -1,0 +1,85 @@
+name: Reviewed npm release
+
+# Deliberate manual dispatch; no automatic release, scheduled agent or token loop.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing reviewed version tag, for example v2.2.1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: npm-release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Validate exact reviewed release source
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          node -e 'if (!/^v\d+\.\d+\.\d+$/.test(process.env.RELEASE_TAG)) process.exit(1)'
+          test -z "$(git status --porcelain)"
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          test "$RELEASE_TAG" = "v$(node -p 'require("./package.json").version')"
+
+      - run: npm install --global npm@12.1.0
+      - run: npm ci --ignore-scripts
+      - run: python -m pip install semgrep==1.183.0
+      - name: Build evidence and prove offline recovery
+        run: npm run assurance
+      - name: Attest distributed package provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: release-artifacts/email-smtp-imap-mcp-*.tgz
+      - name: Attest component record
+        uses: actions/attest@v4
+        with:
+          subject-path: release-artifacts/email-smtp-imap-mcp-*.tgz
+          sbom-path: release-artifacts/sbom.spdx.json
+      - name: Bundle retained release inputs and results
+        run: tar -czf release-assurance.tgz -C release-artifacts .
+      - name: Retain inspected release bundle before registry publication
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-assurance-${{ github.sha }}
+          path: release-assurance.tgz
+          retention-days: 90
+          if-no-files-found: error
+      - name: Publish exact inspected package with npm provenance
+        # Supports a configured npm OIDC publisher or the existing authorized publishing token.
+        # GitHub OIDC signs provenance independently of the registry authentication method.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish release-artifacts/email-smtp-imap-mcp-*.tgz --access public --provenance --ignore-scripts
+      - name: Verify npm registry received the inspected bytes
+        run: |
+          node --input-type=module -e 'import {readFileSync} from "node:fs"; import {execFileSync} from "node:child_process"; const p=JSON.parse(readFileSync("package.json")); const expected=JSON.parse(readFileSync("release-artifacts/package-files.json")).integrity; const actual=JSON.parse(execFileSync("npm",["view",`${p.name}@${p.version}`,"dist.integrity","--json"],{encoding:"utf8"})); if(actual!==expected) throw new Error("Registry tarball integrity mismatch"); console.log(`${p.name}@${p.version}: registry integrity verified`);'
+      - name: Retain durable GitHub release evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || gh release create "$RELEASE_TAG" --verify-tag --generate-notes
+          gh release upload "$RELEASE_TAG" release-assurance.tgz release-artifacts/email-smtp-imap-mcp-*.tgz release-artifacts/sbom.spdx.json release-artifacts/checksums.json
+          gh release view "$RELEASE_TAG" --json url,tagName,assets

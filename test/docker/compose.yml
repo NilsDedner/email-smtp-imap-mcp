@@ -6,6 +6,8 @@ services:
     volumes:
       - ./dovecot.conf:/etc/dovecot/dovecot.conf:ro
       - ./users:/etc/dovecot/users:ro
+      - ../fixtures/localhost-cert.pem:/etc/dovecot/tls/cert.pem:ro
+      - ../fixtures/localhost-key.pem:/etc/dovecot/tls/key.pem:ro
     healthcheck:
       test: ["CMD", "doveadm", "user", "alice@example.test"]
       interval: 1s

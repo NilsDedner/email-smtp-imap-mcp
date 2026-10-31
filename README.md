@@ -145,11 +145,17 @@ Per account (environment variable, or the lowercase key in `EMAIL_ACCOUNTS_JSON`
 
 IMAP connections are kept open for 30 seconds after use and reused, because logging in is the slowest part of most operations and some providers limit logins. Set `IMAP_KEEPALIVE_SECONDS` to change the time, or to `0` to open one connection per call. A connection the server has closed is replaced automatically, and parked connections are closed when the MCP client disconnects.
 
+### Diagnostics
+
+Errors include the response code and text of the IMAP server where there is one. To record the whole IMAP conversation of a run, set `IMAP_DEBUG_LOG=/path/to/file`. ImapFlow masks passwords, but the file contains folder names, subjects and addresses, so keep it private and delete it afterwards. Nothing is logged by default.
+
 ### Bulk actions
 
 `emails_modify` can act on everything that matches `filters` and/or `query` instead of a list of IDs, up to 500 emails per call. A selection must be confirmed in two steps: call it once with `dry_run: true` to see how many emails match plus a sample, then repeat it with `expected_count` set to that number. If the count has changed in the meantime, the call is refused. A selection without any filter or query is rejected.
 
 ## Tools
+
+See the [tool reference](docs/tool-reference.md) for every input, default, response field and error format.
 
 | Tool | What it does |
 | --- | --- |
@@ -170,7 +176,7 @@ IMAP connections are kept open for 30 seconds after use and reused, because logg
 | `folder_delete` | Delete a folder and its messages (needs `ALLOW_PERMANENT_DELETE`). INBOX and special folders (Sent, Drafts, Trash, ...) are protected. |
 | `folders_list` | List folders with path, parent, separator, special-use type (`\Sent`, `\Drafts`, `\Trash`, ...) and optional total and unread counts. |
 
-Every email tool accepts an optional `account_name`. Without it, the server uses `DEFAULT_EMAIL_ACCOUNT` or the first configured account. There is no application-level account-count limit.
+All tools except `accounts_list` accept an optional `account_name`. Without it, the server uses `DEFAULT_EMAIL_ACCOUNT` or the first configured account. There is no application-level account-count limit.
 
 ## Verify your setup
 
@@ -189,7 +195,7 @@ After restarting the MCP client, try these in order:
 | iCloud Mail | `smtp.mail.me.com:587` | `imap.mail.me.com:993` | [App-specific password](https://support.apple.com/en-us/102654) |
 | Other providers | Use the provider's SMTP host | Use the provider's IMAP host | Provider password or app password |
 
-Use `secure: true` for implicit TLS ports such as 465/993. Port 587 normally uses `secure: false` and upgrades with STARTTLS.
+Use `secure: true` for implicit TLS ports such as 465/993. Port 587 normally uses `secure: false` and upgrades with STARTTLS. Both SMTP and IMAP require TLS 1.2 or newer and a valid server certificate. With `secure: false`, STARTTLS is mandatory before authentication; servers without STARTTLS are rejected. Plaintext-only relays are not supported.
 
 ## Development
 
@@ -213,3 +219,9 @@ Issues and focused pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING
 ## License
 
 [MIT](LICENSE) © Sami Halawa
+
+## Security and release assurance
+
+Report vulnerabilities through the private route in [SECURITY.md](SECURITY.md). The [security assurance programme](docs/security-assurance.md) and [source-bound review](docs/security-review.md) describe the controls, evidence and publication boundaries for this project. They do not claim an external ISO certificate or completed OpenChain conformance.
+
+Maintainers can run `npm run assurance` to build the package, run security checks, archive pinned component inputs and verify an offline recovery. The generated release assets include platform-specific build inputs and are intended for durable release retention.

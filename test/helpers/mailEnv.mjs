@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +11,11 @@ import MailComposer from 'nodemailer/lib/mail-composer/index.js';
 
 const composeFile = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../docker/compose.yml');
 const DOMAIN = 'example.test';
+
+// Public, test-only loopback identity (see test/fixtures/README.md). The MCP subprocess trusts it through
+// NODE_EXTRA_CA_CERTS only; certificate verification stays on.
+const CERT_FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../fixtures/localhost-cert.pem');
+const KEY_FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../fixtures/localhost-key.pem');
 
 export const USERS = {
   alice: { user: `alice@${DOMAIN}`, pass: 'alice-pass' },
@@ -41,6 +47,8 @@ export async function imapClient(user, port) {
     host: '127.0.0.1',
     port,
     secure: false,
+    doSTARTTLS: true,
+    tls: { ca: readFileSync(CERT_FILE) },
     auth: { user: user.user, pass: user.pass },
     logger: false
   });
@@ -70,7 +78,8 @@ export async function startMailEnv() {
 
   const smtp = new SMTPServer({
     authOptional: true,
-    disabledCommands: ['STARTTLS'],
+    key: readFileSync(KEY_FILE),
+    cert: readFileSync(CERT_FILE),
     onAuth(auth, session, callback) {
       const known = Object.values(USERS).find((u) => u.user === auth.username && u.pass === auth.password);
       if (!known) return callback(new Error('Invalid credentials'));
@@ -134,6 +143,7 @@ export async function startMailEnv() {
         alice_nodelete: accountConfig(USERS.alice, { allow_delete: false })
       }),
       DEFAULT_EMAIL_ACCOUNT: 'alice',
+      NODE_EXTRA_CA_CERTS: CERT_FILE,
       ...extra
     }),
     /** Direct IMAP access for assertions and fixtures */
@@ -208,6 +218,10 @@ export async function startMailEnv() {
     },
     async stop() {
       await new Promise((resolve) => smtp.close(resolve));
+      if (process.env.MAIL_ENV_KEEP) {
+        console.error(`MAIL_ENV_KEEP: container left running as project ${project}`);
+        return;
+      }
       try {
         compose('down', '-v', '--remove-orphans');
       } catch {}
