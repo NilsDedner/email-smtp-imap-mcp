@@ -18,6 +18,8 @@ One local MCP server for every inbox: search, read, send, reply, forward, and or
 
 ## Why this server
 
+For third-party notices, licence enquiries and the version 2.2.2 supplement, see the [open source licence compliance programme](docs/license-compliance/PROGRAMME.md).
+
 - **No account-count cap** — add work, personal, support, or client inboxes and switch with `account_name`.
 - **SMTP + IMAP together** — send and receive through one small MCP server.
 - **Complete everyday workflow** — search, read, reply, forward, attach files, flag, archive, move, and list folders.

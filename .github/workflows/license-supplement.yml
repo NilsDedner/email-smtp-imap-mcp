@@ -1,0 +1,31 @@
+name: Publish licence supplement
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  supplement:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify the original release and build its licence supplement
+        run: python scripts/license-compliance.py --check --package
+      - name: Attest the supplementary distribution
+        uses: actions/attest@v4
+        with:
+          subject-path: release-artifacts/license-supplement-2.2.2.tgz
+      - name: Attach supplement without replacing existing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload v2.2.2 release-artifacts/license-supplement-2.2.2.tgz --repo "$GITHUB_REPOSITORY"
