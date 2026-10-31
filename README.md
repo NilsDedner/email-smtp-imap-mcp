@@ -11,6 +11,7 @@ One local MCP server for every inbox: search, read, send, reply, forward, and or
 [![downloads](https://img.shields.io/npm/dm/email-smtp-imap-mcp)](https://www.npmjs.com/package/email-smtp-imap-mcp)
 [![CI](https://github.com/samihalawa/email-smtp-imap-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/samihalawa/email-smtp-imap-mcp/actions/workflows/ci.yml)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16125/badge)](https://www.bestpractices.dev/projects/16125)
+[![OpenSSF Baseline](https://www.bestpractices.dev/projects/16125/baseline)](https://www.bestpractices.dev/projects/16125)
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![stars](https://img.shields.io/github/stars/samihalawa/email-smtp-imap-mcp?style=flat)](https://github.com/samihalawa/email-smtp-imap-mcp/stargazers)
 [![license](https://img.shields.io/github/license/samihalawa/email-smtp-imap-mcp)](LICENSE)

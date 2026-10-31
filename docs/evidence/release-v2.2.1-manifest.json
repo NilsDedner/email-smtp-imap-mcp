@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "release": {
+    "repository": "samihalawa/email-smtp-imap-mcp",
+    "tag": "v2.2.1",
+    "releaseId": 430122161,
+    "sourceCommit": "c2c1056d48f980f7dec943b3bda5c43e9218bf49",
+    "url": "https://github.com/samihalawa/email-smtp-imap-mcp/releases/tag/v2.2.1"
+  },
+  "hashAlgorithm": "SHA-256",
+  "assets": [
+    {
+      "name": "checksums.json",
+      "bytes": 34734,
+      "sha256": "bd89fc87a0b3723bcf52519da2b24a2b45f3820b562ce1a67b7b8eecb3a37c26",
+      "url": "https://github.com/samihalawa/email-smtp-imap-mcp/releases/download/v2.2.1/checksums.json"
+    },
+    {
+      "name": "email-smtp-imap-mcp-2.2.1.tgz",
+      "bytes": 473723,
+      "sha256": "5c713a9845c08190aafc4fbc0a04e88425379201b8cfda55d593293f9cc4c584",
+      "url": "https://github.com/samihalawa/email-smtp-imap-mcp/releases/download/v2.2.1/email-smtp-imap-mcp-2.2.1.tgz"
+    },
+    {
+      "name": "release-assurance.tgz",
+      "bytes": 193084942,
+      "sha256": "59304f890fa773b9b2325b1904798dc329214ffe5f705d5fb1ee7195856ade12",
+      "url": "https://github.com/samihalawa/email-smtp-imap-mcp/releases/download/v2.2.1/release-assurance.tgz"
+    },
+    {
+      "name": "sbom.spdx.json",
+      "bytes": 212211,
+      "sha256": "c0935a6061a9c4a5cb701e018b7d7844007b376ad53209451716c3e243b7104f",
+      "url": "https://github.com/samihalawa/email-smtp-imap-mcp/releases/download/v2.2.1/sbom.spdx.json"
+    }
+  ]
+}
