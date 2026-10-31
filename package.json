@@ -1,6 +1,6 @@
 {
   "name": "email-smtp-imap-mcp",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "description": "Multi-account email MCP server for SMTP sending, IMAP search, replies, attachments, and inbox organization",
   "main": "build/index.js",
   "types": "build/index.d.ts",
@@ -68,5 +68,6 @@
   "homepage": "https://github.com/samihalawa/email-smtp-imap-mcp#readme",
   "engines": {
     "node": ">=20.0.0"
-  }
+  },
+  "mcpName": "io.github.samihalawa/email-smtp-imap-mcp"
 }

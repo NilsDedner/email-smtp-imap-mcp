@@ -1,0 +1,37 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.samihalawa/email-smtp-imap-mcp",
+  "description": "Multi-account SMTP/IMAP email tools: search, read, send, reply, forward, flags and folders.",
+  "repository": {
+    "url": "https://github.com/samihalawa/email-smtp-imap-mcp",
+    "source": "github"
+  },
+  "version": "2.2.2",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "email-smtp-imap-mcp",
+      "version": "2.2.2",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "EMAIL_ACCOUNTS_JSON",
+          "description": "JSON object keyed by account name with SMTP and IMAP settings and credentials; see the repository setup guide.",
+          "format": "string",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "DEFAULT_EMAIL_ACCOUNT",
+          "description": "Default account name from EMAIL_ACCOUNTS_JSON; optional when the first account should be used.",
+          "format": "string",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

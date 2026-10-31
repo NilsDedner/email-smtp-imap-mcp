@@ -1,0 +1,89 @@
+name: Verify and attest existing release assets
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  attest:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Download the four existing v2.2.1 assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release download v2.2.1 --repo samihalawa/email-smtp-imap-mcp
+          --pattern checksums.json --pattern email-smtp-imap-mcp-2.2.1.tgz
+          --pattern release-assurance.tgz --pattern sbom.spdx.json
+          --dir verified-release-assets
+      - name: Verify release identity and every downloaded byte
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, readdirSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          import assert from 'node:assert/strict';
+          const manifest = JSON.parse(readFileSync('docs/evidence/release-v2.2.1-manifest.json'));
+          assert.equal(manifest.schemaVersion, 1);
+          assert.equal(manifest.hashAlgorithm, 'SHA-256');
+          const { repository, tag, releaseId, sourceCommit } = manifest.release;
+          assert.equal(repository, 'samihalawa/email-smtp-imap-mcp');
+          assert.equal(tag, 'v2.2.1');
+          assert.equal(releaseId, 430122161);
+          assert.equal(sourceCommit, 'c2c1056d48f980f7dec943b3bda5c43e9218bf49');
+          assert.equal(execFileSync('git', ['rev-parse', `refs/tags/${tag}^{commit}`], { encoding: 'utf8' }).trim(), sourceCommit);
+          const release = JSON.parse(execFileSync('gh', ['api', `repos/${repository}/releases/${releaseId}`], { encoding: 'utf8' }));
+          assert.equal(release.tag_name, tag);
+          assert.equal(release.draft, false);
+          assert.equal(release.html_url, manifest.release.url);
+          const names = manifest.assets.map(asset => asset.name).sort();
+          assert.equal(names.length, 4);
+          assert.deepEqual(release.assets.map(asset => asset.name).sort(), names);
+          assert.deepEqual(readdirSync('verified-release-assets').sort(), names);
+          for (const asset of manifest.assets) {
+            assert.match(asset.name, /^[a-zA-Z0-9.-]+$/);
+            assert.match(asset.sha256, /^[a-f0-9]{64}$/);
+            const bytes = readFileSync(`verified-release-assets/${asset.name}`);
+            const remote = release.assets.find(item => item.name === asset.name);
+            assert.equal(bytes.length, asset.bytes);
+            assert.equal(remote.size, asset.bytes);
+            assert.equal(remote.browser_download_url, asset.url);
+            assert.equal(remote.digest, `sha256:${asset.sha256}`);
+            assert.equal(createHash('sha256').update(bytes).digest('hex'), asset.sha256);
+            console.log(`${asset.name}: SHA-256 and size verified`);
+          }
+          console.log(`Verified four existing assets for ${tag}; original source ${sourceCommit}`);
+          NODE
+      - name: Sign the verified release assets and manifest
+        id: attest
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            verified-release-assets/*
+            docs/evidence/release-v2.2.1-manifest.json
+          predicate-type: https://github.com/samihalawa/email-smtp-imap-mcp/attestations/release-asset-verification/v1
+          predicate-path: docs/evidence/release-v2.2.1-manifest.json
+      - name: Retain the signature bundle
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-asset-signature-${{ github.sha }}
+          path: ${{ steps.attest.outputs.bundle-path }}
+          if-no-files-found: error
+          retention-days: 90
