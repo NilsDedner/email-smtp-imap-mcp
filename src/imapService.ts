@@ -24,7 +24,9 @@ async function createImapConnection(account: EmailAccount): Promise<ImapFlow> {
   const client = new ImapFlow({
     host: account.imap_host,
     port: account.imap_port || 993,
-    secure: account.imap_secure !== false, // Default to true
+    secure: account.imap_secure !== false, // Default to implicit TLS
+    doSTARTTLS: account.imap_secure === false ? true : undefined,
+    tls: { minVersion: 'TLSv1.2', rejectUnauthorized: true },
     auth: {
       user: account.imap_user,
       pass: account.imap_pass
@@ -52,7 +54,7 @@ async function createImapConnection(account: EmailAccount): Promise<ImapFlow> {
       throw new Error(`Connection timed out to ${account.imap_host}:${account.imap_port}. Check network/firewall.`);
     }
     if (message.includes('certificate') || message.includes('SSL') || message.includes('TLS')) {
-      throw new Error(`SSL/TLS error connecting to ${account.imap_host}. Try setting imap_secure to ${!account.imap_secure}.`);
+      throw new Error(`SSL/TLS error connecting to ${account.imap_host}. Check the provider TLS port, hostname and certificate chain; do not disable encryption or certificate validation.`);
     }
     if (message.includes('Invalid credentials') || message.includes('authentication') || message.includes('AUTH') || message.includes('login')) {
       throw new Error(`Authentication failed for ${account.imap_user}. Check username/password.`);

@@ -153,7 +153,7 @@ After restarting the MCP client, try these in order:
 | iCloud Mail | `smtp.mail.me.com:587` | `imap.mail.me.com:993` | [App-specific password](https://support.apple.com/en-us/102654) |
 | Other providers | Use the provider's SMTP host | Use the provider's IMAP host | Provider password or app password |
 
-Use `secure: true` for implicit TLS ports such as 465/993. Port 587 normally uses `secure: false` and upgrades with STARTTLS.
+Use `secure: true` for implicit TLS ports such as 465/993. Port 587 normally uses `secure: false` and upgrades with STARTTLS. Both SMTP and IMAP require TLS 1.2 or newer and a valid server certificate. With `secure: false`, STARTTLS is mandatory before authentication; servers without STARTTLS are rejected. Plaintext-only relays are not supported.
 
 ## Development
 
@@ -173,3 +173,9 @@ Issues and focused pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING
 ## License
 
 [MIT](LICENSE) © Sami Halawa
+
+## Security and release assurance
+
+Report vulnerabilities through the private route in [SECURITY.md](SECURITY.md). The [security assurance programme](docs/security-assurance.md) and [source-bound review](docs/security-review.md) describe the controls, evidence and publication boundaries for this project. They do not claim an external ISO certificate or completed OpenChain conformance.
+
+Maintainers can run `npm run assurance` to build the package, run security checks, archive pinned component inputs and verify an offline recovery. The generated release assets include platform-specific build inputs and are intended for durable release retention.

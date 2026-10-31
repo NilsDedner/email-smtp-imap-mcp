@@ -1,6 +1,6 @@
 {
   "name": "email-smtp-imap-mcp",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Multi-account email MCP server for SMTP sending, IMAP search, replies, attachments, and inbox organization",
   "main": "build/index.js",
   "types": "build/index.d.ts",
@@ -12,23 +12,25 @@
     "build/",
     "docs/assets/",
     "README.md",
+    "SECURITY.md",
     "LICENSE",
     ".env.example"
   ],
   "scripts": {
     "build": "tsc && chmod +x build/index.js",
     "test": "npm run build && node --test test/*.test.mjs",
+    "assurance": "node scripts/release-assurance.mjs",
     "start": "node build/index.js",
     "watch": "tsc --watch",
     "prepare": "npm run build",
     "dev": "npm run build && npm start"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "dotenv": "^17.4.2",
     "imapflow": "^1.6.6",
-    "mailparser": "^3.9.15",
-    "nodemailer": "^9.0.5"
+    "mailparser": "^3.12.4",
+    "nodemailer": "^10.2.1"
   },
   "devDependencies": {
     "@types/mailparser": "^3.4.6",

@@ -56,7 +56,7 @@ async function runServer() {
     const server = new Server(
       {
         name: "email-smtp-imap-mcp",
-        version: "2.2.0"
+        version: "2.2.1"
       },
       {
         capabilities: {
