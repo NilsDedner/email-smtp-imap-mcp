@@ -74,7 +74,7 @@ jobs:
         run: npm publish ./release-artifacts/email-smtp-imap-mcp-*.tgz --access public --provenance --ignore-scripts
       - name: Verify npm registry received the inspected bytes
         run: |
-          node --input-type=module -e 'import {readFileSync} from "node:fs"; import {execFileSync} from "node:child_process"; const p=JSON.parse(readFileSync("package.json")); const expected=JSON.parse(readFileSync("release-artifacts/package-files.json")).integrity; const actual=JSON.parse(execFileSync("npm",["view",`${p.name}@${p.version}`,"dist.integrity","--json"],{encoding:"utf8"})); if(actual!==expected) throw new Error("Registry tarball integrity mismatch"); console.log(`${p.name}@${p.version}: registry integrity verified`);'
+          node --input-type=module -e 'import {readFileSync} from "node:fs"; import {execFileSync} from "node:child_process"; const p=JSON.parse(readFileSync("package.json")); const expected=JSON.parse(readFileSync("release-artifacts/package-files.json")).integrity; const received=JSON.parse(execFileSync("npm",["view",`${p.name}@${p.version}`,"dist.integrity","--json"],{encoding:"utf8"})); const actual=Array.isArray(received)?received[0]:received; if(actual!==expected) throw new Error("Registry tarball integrity mismatch"); console.log(`${p.name}@${p.version}: registry integrity verified`);'
       - name: Retain durable GitHub release evidence
         env:
           GH_TOKEN: ${{ github.token }}
