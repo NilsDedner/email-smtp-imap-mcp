@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import net from 'node:net';
 import tls from 'node:tls';
+import { getDiffieHellman } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { SMTPServer } from 'smtp-server';
 import nodemailer from 'nodemailer';
@@ -104,6 +106,57 @@ test('SMTP retains implicit TLS and STARTTLS settings with TLS 1.2 and certifica
   assert.deepEqual(captured.map(options => options.secure), [false, true]);
   for (const options of captured) {
     assert.equal(options.requireTLS, true);
-    assert.deepEqual(options.tls, { minVersion: 'TLSv1.2', rejectUnauthorized: true });
+    assert.deepEqual(options.tls, { minVersion: 'TLSv1.2', rejectUnauthorized: true, minDHSize: 2048, ciphers: `${tls.DEFAULT_CIPHERS}:@SECLEVEL=2` });
+  }
+});
+
+test('SMTP and IMAP reject 1024-bit DHE even when process defaults permit weak DH', async t => {
+  // RFC 2409's public 1024-bit group is intentionally too weak for production.
+  const prime = getDiffieHellman('modp2').getPrime();
+  const der = Buffer.concat([Buffer.from([0x30, 0x81, 0x87, 0x02, 0x81, 0x81, 0x00]), prime, Buffer.from([0x02, 0x01, 0x02])]);
+  const dhparam = `-----BEGIN DH PARAMETERS-----\n${der.toString('base64').match(/.{1,64}/g).join('\n')}\n-----END DH PARAMETERS-----\n`;
+  for (const protocol of ['smtp', 'imap']) {
+    let authenticated = false;
+    const server = tls.createServer({
+      key: readFileSync(new URL('./fixtures/localhost-key.pem', import.meta.url)),
+      cert: readFileSync(new URL('./fixtures/localhost-cert.pem', import.meta.url)),
+      dhparam, maxVersion: 'TLSv1.2', ciphers: 'DHE-RSA-AES128-GCM-SHA256:@SECLEVEL=0'
+    }, socket => {
+      socket.on('data', data => { authenticated ||= /AUTH|LOGIN/i.test(data.toString()); });
+      socket.end();
+    });
+    server.on('tlsClientError', () => {});
+    const port = await listen(server, t);
+    // Positive control: this same trusted server really can negotiate weak DHE.
+    await new Promise((resolve, reject) => {
+      const control = tls.connect({ host: '127.0.0.1', port,
+        ca: readFileSync(new URL('./fixtures/localhost-cert.pem', import.meta.url)),
+        ciphers: 'DHE-RSA-AES128-GCM-SHA256:@SECLEVEL=0', minDHSize: 1024,
+        maxVersion: 'TLSv1.2' }, () => {
+        try { assert.equal(control.getEphemeralKeyInfo().size, 1024); resolve(); }
+        catch (error) { reject(error); }
+        finally { control.destroy(); }
+      });
+      control.once('error', reject);
+    });
+    const script = `
+      import { sendEmail } from './build/smtpService.js';
+      import { modifyEmails } from './build/imapService.js';
+      const account = ${JSON.stringify({ ...account, smtp_port: port, smtp_secure: true, imap_port: port, imap_secure: true })};
+      try {
+        await (${JSON.stringify(protocol)} === 'smtp' ? sendEmail(account, ${JSON.stringify(message)}) : modifyEmails(account, [], {}));
+        process.exitCode = 1;
+      } catch (error) {
+        if (!/dh key too small|DH parameter size|SSL.TLS error/.test(error.message)) { console.error(error.message); process.exitCode = 1; }
+      }
+    `;
+    const child = spawn(process.execPath, ['--tls-cipher-list=DHE-RSA-AES128-GCM-SHA256:@SECLEVEL=0', '--input-type=module', '-e', script], {
+      env: { ...process.env, NODE_EXTRA_CA_CERTS: new URL('./fixtures/localhost-cert.pem', import.meta.url).pathname }, stdio: ['ignore', 'ignore', 'pipe']
+    });
+    let errors = '';
+    child.stderr.on('data', data => { errors += data; });
+    const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', resolve); });
+    assert.equal(code, 0, `${protocol} must reject weak DH: ${errors}`);
+    assert.equal(authenticated, false);
   }
 });

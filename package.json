@@ -11,6 +11,7 @@
   "files": [
     "build/",
     "docs/assets/",
+    "docs/tool-reference.md",
     "README.md",
     "SECURITY.md",
     "LICENSE",

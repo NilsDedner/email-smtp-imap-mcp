@@ -125,6 +125,8 @@ Use `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `IMAP_HOS
 
 ## Tools
 
+See the [tool reference](docs/tool-reference.md) for every input, default, response field and error format.
+
 | Tool | What it does |
 | --- | --- |
 | `accounts_list` | List every configured account and identify the default without exposing credentials. |
@@ -134,7 +136,7 @@ Use `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `IMAP_HOS
 | `emails_modify` | Mark read/unread, flag/unflag, or move messages to another folder. |
 | `folders_list` | List folders with optional total and unread counts. |
 
-Every email tool accepts an optional `account_name`. Without it, the server uses `DEFAULT_EMAIL_ACCOUNT` or the first configured account. There is no application-level account-count limit.
+All tools except `accounts_list` accept an optional `account_name`. Without it, the server uses `DEFAULT_EMAIL_ACCOUNT` or the first configured account. There is no application-level account-count limit.
 
 ## Verify your setup
 
