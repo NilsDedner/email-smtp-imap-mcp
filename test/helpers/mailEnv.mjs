@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,9 +19,11 @@ const DOMAIN = 'example.test';
 const CERT_FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../fixtures/localhost-cert.pem');
 const KEY_FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../fixtures/localhost-key.pem');
 
+// Throwaway passwords, new for every test process: nothing credential-like is committed to the repository.
+const randomPassword = () => randomBytes(12).toString('hex');
 export const USERS = {
-  alice: { user: `alice@${DOMAIN}`, pass: 'alice-pass' },
-  bob: { user: `bob@${DOMAIN}`, pass: 'bob-pass' }
+  alice: { user: `alice@${DOMAIN}`, pass: randomPassword() },
+  bob: { user: `bob@${DOMAIN}`, pass: randomPassword() }
 };
 
 export function dockerAvailable() {
@@ -64,7 +68,10 @@ export async function imapClient(user, port) {
 export async function startMailEnv() {
   const imapPort = await freePort();
   const project = `mcp-test-${process.pid}`;
-  const env = { ...process.env, TEST_IMAP_PORT: String(imapPort) };
+  const usersDir = mkdtempSync(path.join(os.tmpdir(), 'mcp-test-users-'));
+  const usersFile = path.join(usersDir, 'users');
+  writeFileSync(usersFile, Object.values(USERS).map((u) => `${u.user}:{PLAIN}${u.pass}\n`).join(''));
+  const env = { ...process.env, TEST_IMAP_PORT: String(imapPort), TEST_USERS_FILE: usersFile };
   const compose = (...args) => execFileSync('docker', ['compose', '-p', project, '-f', composeFile, ...args], { env, stdio: 'pipe' });
 
   try {
@@ -73,6 +80,7 @@ export async function startMailEnv() {
     try {
       compose('down', '-v', '--remove-orphans');
     } catch {}
+    rmSync(usersDir, { recursive: true, force: true });
     throw error;
   }
 
@@ -225,6 +233,7 @@ export async function startMailEnv() {
       try {
         compose('down', '-v', '--remove-orphans');
       } catch {}
+      rmSync(usersDir, { recursive: true, force: true });
     }
   };
 }
