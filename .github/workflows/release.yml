@@ -59,6 +59,14 @@ jobs:
           sbom-path: release-artifacts/sbom.spdx.json
       - name: Bundle retained release inputs and results
         run: tar -czf release-assurance.tgz -C release-artifacts .
+      - name: Attest every distributed release asset
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            release-assurance.tgz
+            release-artifacts/email-smtp-imap-mcp-*.tgz
+            release-artifacts/sbom.spdx.json
+            release-artifacts/checksums.json
       - name: Retain inspected release bundle before registry publication
         uses: actions/upload-artifact@v6
         with:

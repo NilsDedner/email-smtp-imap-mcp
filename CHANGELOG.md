@@ -1,6 +1,11 @@
 # Changelog
 
-## [2.2.1] - Unreleased
+## [2.2.2] - 2026-10-31
+
+- Add npm ownership metadata and a versioned stdio configuration for the official MCP Registry.
+- Keep the existing SMTP/IMAP security policy and tool behavior unchanged.
+
+## [2.2.1] - 2026-10-31
 
 - Require validated TLS 1.2 or newer for SMTP and IMAP, including mandatory STARTTLS before authentication when implicit TLS is not selected, OpenSSL security level 2 and a 2048-bit minimum for Diffie–Hellman parameters.
 - Replace insecure TLS troubleshooting advice and add real encrypted-protocol, downgrade and invalid-certificate regression coverage.
