@@ -2,6 +2,7 @@
  * SMTP email sending operations
  */
 
+import { DEFAULT_CIPHERS } from 'node:tls';
 import nodemailer from 'nodemailer';
 import { EmailAccount, EmailAttachment, EmailMessage } from './types.js';
 import { getEmailById } from './imapService.js';
@@ -26,7 +27,7 @@ function createTransporter(account: EmailAccount) {
     secure: account.smtp_secure,
     // secure=false selects STARTTLS, never permission to send credentials in cleartext.
     requireTLS: true,
-    tls: { minVersion: 'TLSv1.2', rejectUnauthorized: true },
+    tls: { minVersion: 'TLSv1.2', rejectUnauthorized: true, minDHSize: 2048, ciphers: `${DEFAULT_CIPHERS}:@SECLEVEL=2` },
     auth: {
       user: account.smtp_user,
       pass: account.smtp_pass

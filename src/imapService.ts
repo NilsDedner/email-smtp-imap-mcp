@@ -2,6 +2,7 @@
  * IMAP email operations
  */
 
+import { DEFAULT_CIPHERS } from 'node:tls';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { EmailAccount, EmailFilters, EmailMessage, EmailFolder } from './types.js';
@@ -26,7 +27,7 @@ async function createImapConnection(account: EmailAccount): Promise<ImapFlow> {
     port: account.imap_port || 993,
     secure: account.imap_secure !== false, // Default to implicit TLS
     doSTARTTLS: account.imap_secure === false ? true : undefined,
-    tls: { minVersion: 'TLSv1.2', rejectUnauthorized: true },
+    tls: { minVersion: 'TLSv1.2', rejectUnauthorized: true, minDHSize: 2048, ciphers: `${DEFAULT_CIPHERS}:@SECLEVEL=2` },
     auth: {
       user: account.imap_user,
       pass: account.imap_pass

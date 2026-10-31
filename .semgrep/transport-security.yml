@@ -6,7 +6,7 @@ rules:
     patterns:
       - pattern: nodemailer.createTransport({...})
       - pattern-not: |
-          nodemailer.createTransport({..., requireTLS: true, tls: {minVersion: 'TLSv1.2', rejectUnauthorized: true}, ...})
+          nodemailer.createTransport({..., requireTLS: true, tls: {minVersion: 'TLSv1.2', rejectUnauthorized: true, minDHSize: 2048, ciphers: $CIPHERS}, ...})
   - id: imap-requires-validated-tls
     languages: [typescript]
     severity: ERROR
@@ -14,7 +14,7 @@ rules:
     patterns:
       - pattern: new ImapFlow({...})
       - pattern-not: |
-          new ImapFlow({..., doSTARTTLS: $POLICY, tls: {minVersion: 'TLSv1.2', rejectUnauthorized: true}, ...})
+          new ImapFlow({..., doSTARTTLS: $POLICY, tls: {minVersion: 'TLSv1.2', rejectUnauthorized: true, minDHSize: 2048, ciphers: $CIPHERS}, ...})
   - id: no-disabled-certificate-validation
     languages: [typescript]
     severity: ERROR

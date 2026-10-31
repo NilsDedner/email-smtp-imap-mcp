@@ -2,7 +2,7 @@
 
 ## [2.2.1] - Unreleased
 
-- Require validated TLS 1.2 or newer for SMTP and IMAP, including mandatory STARTTLS before authentication when implicit TLS is not selected.
+- Require validated TLS 1.2 or newer for SMTP and IMAP, including mandatory STARTTLS before authentication when implicit TLS is not selected, OpenSSL security level 2 and a 2048-bit minimum for Diffie–Hellman parameters.
 - Replace insecure TLS troubleshooting advice and add real encrypted-protocol, downgrade and invalid-certificate regression coverage.
 - Reuse the existing dependency security fixes from PR18 and update the remaining vulnerable Hono adapter dependency.
 - Add free static security analysis, source/component archives with offline recovery, and a manually dispatched npm provenance release workflow with GitHub OIDC attestations.
